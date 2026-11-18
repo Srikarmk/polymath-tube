@@ -14,6 +14,8 @@ export type Video = {
   score: number;
   recs: number;
   years: [number, number];
+  rm: number;
+  ry: string;
   f: number[];
   sim: [string, number][];
   rel: string[];
@@ -26,6 +28,7 @@ export type Meta = {
   cats: Record<string, { name: string; area: string; n: number }>;
   areas: { id: string; name: string; cats: string[] }[];
   generated: string;
+  years: [number, number];
 };
 
 export type Mention = { u: string; m: string; s: string; x: string; id: number; st: string };

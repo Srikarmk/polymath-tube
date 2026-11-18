@@ -2,31 +2,38 @@
 
 **Live:** https://polymath-tube.vercel.app
 
-HackerTube, re-ranked for one person. [HackerTube](https://hackertube.org) kept the YouTube videos that
-Hacker News commenters recommended again and again from 2007 to 2026, and published them as open data.
-This site takes that list and ranks it against my own projects.
+The talks, lectures and documentaries that Hacker News commenters kept recommending from 2007 to 2026,
+in one feed that ranges across 150 topics. It is built on the open data that
+[HackerTube](https://hackertube.org) published: every YouTube video that at least three different people
+recommended on HN, in at least three different months.
 
-## How the ranking works
+## How the feed is ranked
 
-`profile.json` holds 14 threads, one for each strand of my work: eval statistics (evalpair,
-experiment-forensics), how LLMs fail (prompt-brittleness, llm-judge-bias, format-tax), real-time graphics
-(Duskline), transit and civic data (Yeas & Nays, bostonmove), and so on. Each thread's text is embedded
-with `BAAI/bge-small-en-v1.5`, the model HackerTube used for its video vectors, and every video is scored
-against every thread.
+`profile.json` holds a set of interests, each a short description ("how transformers work inside",
+"cities, transit and civic data", "game design and game feel"). Each is embedded with
+`BAAI/bge-small-en-v1.5`, the model HackerTube used for its video vectors, and every video is scored
+against every interest.
 
-Raw cosine favours generic videos: an intro ML lecture scores well against half the profile. So each
-thread's similarity is z-scored, and half the video's average z across all threads is subtracted. A
-video's score is `0.7 ×` its strongest weighted thread, plus `0.6 × log(1 + HackerTube score)`, the
-number of months HN kept recommending it. The feed is then picked greedily across HackerTube's 16 areas
-and 150 topics: repeating a topic or an area costs points, and the first video from a new area earns
-some. My own work leads the feed and the rest of it ranges across everything HN watches (the first 36
-cards cover 34 topics). The sidebar browses those topics directly.
+Raw cosine favours generic videos: an intro lecture matches half the interests a little. So each
+interest's similarity is z-scored, and half the video's average z across all interests is subtracted,
+which keeps an interest's top picks about that interest. A video's score is its strongest weighted
+interest plus `0.6 × log(1 + HackerTube score)`, where HackerTube's score counts the months HN kept
+recommending it.
 
-In the browser, likes boost a video's embedding neighbours and the videos its HN recommenders also
-liked. "Not for me" pushes neighbours down, and videos you've already opened drop back. Thread weights
-can be changed on the Tune page. All of this is stored in `localStorage` only.
+A small nudge that changes every day (and on every Shuffle) keeps the mix from going stale, and videos
+HackerTube marks as dated drop a little. The feed is then picked greedily across HackerTube's 16 areas
+and 150 topics: a second video from the same topic, area or channel costs points, and the first video
+from a new area earns some. A content-type filter (talks, lectures, documentaries, explainers,
+interviews) narrows it.
 
-## Rebuild
+Each video carries a strip of 20 cells, 2007 to 2026, lit in the years HN commenters recommended it
+(brighter for more recommending comments among the up to 20 the export keeps per video).
+
+In the browser, a like raises the video's nearest neighbours by embedding and the videos its HN
+recommenders also recommended. "Not for me" pushes its neighbours down, and videos already opened drop
+back. Interest weights can be changed on the Tune page. All of this stays in `localStorage`.
+
+## Run it
 
 ```bash
 mkdir -p data/raw && cd data/raw && curl -LO https://hackertube.org/download/hackertube-data.zip && unzip hackertube-data.zip && cd ../..
@@ -34,7 +41,7 @@ uv run --with fastembed --with numpy python build/build.py   # writes web/public
 cd web && npm install && npm run dev                         # http://localhost:5191
 ```
 
-Edit `profile.json` and re-run `build.py` to change what the site thinks I care about.
+Edit `profile.json` and re-run `build.py` to change the interests the feed starts from.
 
 ## Credit
 

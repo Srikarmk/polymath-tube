@@ -4,3 +4,4 @@ data/raw/
 data/facet_sims*.npy
 data/facet_sims_ids.json
 .DS_Store
+.taste-skill/

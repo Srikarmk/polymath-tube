@@ -9,10 +9,12 @@ export type State = {
   history: { id: string; at: number }[];
   hidden: string[];
   weights: Record<string, number>;
+  shuffle: number;
+  type: string | null;
 };
 
 const KEY = "polymath-tube:v1";
-const empty: State = { liked: [], later: [], history: [], hidden: [], weights: {} };
+const empty: State = { liked: [], later: [], history: [], hidden: [], weights: {}, shuffle: 0, type: null };
 
 function read(): State {
   try {
@@ -59,4 +61,6 @@ export const actions = {
   clearHistory: () => set({ ...state, history: [] }),
   setWeight: (facet: string, w: number) => set({ ...state, weights: { ...state.weights, [facet]: w } }),
   resetWeights: () => set({ ...state, weights: {} }),
+  shuffle: () => set({ ...state, shuffle: state.shuffle + 1 }),
+  setType: (type: string | null) => set({ ...state, type }),
 };

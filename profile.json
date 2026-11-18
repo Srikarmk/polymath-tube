@@ -1,100 +1,86 @@
 {
-  "_note": "Your taste profile. Each facet is one thread of your own work. `text` is what gets embedded and matched against every video; `label` is what the site shows as the reason; `weight` is the default pull (the site lets you change it). Edit freely and re-run `python build/build.py`.",
+  "_note": "The interests the For you feed starts from. `text` is embedded and matched against every video; `short` is the name shown on the Tune page; `weight` is the default pull (the site lets each viewer change it). Edit freely and re-run `python build/build.py`.",
   "facets": [
     {
       "id": "eval-stats",
-      "label": "evalpair & experiment-forensics",
       "short": "Measuring whether a change is real",
       "weight": 1.0,
       "text": "Statistics of evaluation and experiments: is a difference real or noise? Paired comparisons, significance testing, confidence intervals, bootstrap, A/B testing, p-hacking, multiple comparisons, variance reduction, reproducibility crisis, benchmarks and how measurements mislead."
     },
     {
       "id": "llm-failures",
-      "label": "prompt-brittleness, llm-judge-bias, format-tax",
       "short": "How LLMs fail",
       "weight": 1.0,
       "text": "Where large language models go wrong: hallucination, prompt sensitivity, LLM-as-a-judge bias, sycophancy, unreliable reasoning, evaluating AI capabilities honestly, skepticism about AI hype and benchmarks."
     },
     {
       "id": "llm-internals",
-      "label": "quant-cliff & long-context-recall",
       "short": "What happens inside the model",
       "weight": 1.0,
       "text": "How transformers and large language models work inside: attention, tokenization, training neural networks from scratch, backpropagation, quantization and low-bit inference, long context, running models locally, GPUs and inference efficiency."
     },
     {
       "id": "retrieval",
-      "label": "Silent-RAG-Failures, rag-poisoning, worksearch",
       "short": "Search and retrieval",
       "weight": 0.9,
       "text": "Information retrieval and search engines: how search works, inverted indexes, BM25 and ranking, embeddings and vector databases, semantic search, retrieval-augmented generation, recommender systems."
     },
     {
       "id": "agents",
-      "label": "agent-interface-lab, tool-call-reliability, groupthink",
       "short": "Agents and tool use",
       "weight": 0.9,
       "text": "AI agents and tool use: coding agents, LLMs calling tools and APIs, multi-agent debate, memory for agents, building with Claude and LLM APIs, the future of programming with AI."
     },
     {
       "id": "ml-eng",
-      "label": "MLOps labs & boston-resilience-twin",
       "short": "ML in production",
       "weight": 0.7,
       "text": "Machine learning engineering in production: data pipelines, MLOps, data quality, forecasting, model monitoring, Docker, workflow orchestration, data engineering, practical machine learning systems."
     },
     {
       "id": "bayes",
-      "label": "region-aware-gp",
       "short": "Probabilistic modelling",
       "weight": 0.6,
       "text": "Bayesian statistics and probabilistic machine learning: Gaussian processes, uncertainty, probabilistic programming, Bayesian inference, statistical thinking, probability."
     },
     {
       "id": "research",
-      "label": "Keystone & Shortlist",
       "short": "How research works",
       "weight": 0.6,
       "text": "How science and research work: reading papers, citations, peer review, the scientific method, writing and communicating research, how to do great research, history of ideas in computer science."
     },
     {
       "id": "graphics",
-      "label": "Duskline",
       "short": "Real-time graphics",
       "weight": 0.8,
       "text": "Real-time computer graphics and rendering: shaders, WebGL, three.js, procedural generation, lighting, game engine programming, performance and draw calls, physics simulation for games."
     },
     {
       "id": "game-design",
-      "label": "Duskline & Hero Forge",
       "short": "Game design and game feel",
       "weight": 0.8,
       "text": "Game design and indie game development: game feel, level design, art direction, atmospheric games like Limbo and Ori, making a game alone, why games are fun, racing games, platformers."
     },
     {
       "id": "civic",
-      "label": "Yeas & Nays, bostonmove",
       "short": "Cities, transit, civic data",
       "weight": 0.8,
       "text": "Cities and civic data: public transit, urbanism, city government, Boston, open data, how local politics and councils work, infrastructure, journalism with data."
     },
     {
       "id": "attention",
-      "label": "Flustered, Hearth, CleanYourTV",
       "short": "Tech that respects attention",
       "weight": 0.7,
       "text": "Technology and attention: the attention economy, social media and doomscrolling, ad-free software, privacy and tracking, humane tech design, smartphones and wellbeing, courage and habits."
     },
     {
       "id": "devtools",
-      "label": "whygit & GitGotchi",
       "short": "Developer tools",
       "weight": 0.7,
       "text": "Developer tools and the craft of programming: Git internals, the command line and terminal, writing good software, simple design, debugging, open source tools, programming talks."
     },
     {
       "id": "craft",
-      "label": "srikarmk.dev",
       "short": "Design and web craft",
       "weight": 0.5,
       "text": "Visual and interface design: typography, UI design, web design, data visualization, making software beautiful and restrained, design thinking."

@@ -16,6 +16,7 @@ from score import RAW, ROOT, specific
 OUT = ROOT / "web" / "public" / "data"
 MENTIONS_PER_VIDEO = 5
 SIMILAR_PER_VIDEO = 12
+FIRST_YEAR, LAST_YEAR = 2007, 2026
 
 
 def norm_title(t):
@@ -57,6 +58,22 @@ def main():
     S = E @ E.T
     np.fill_diagonal(S, -1)
 
+    mentions = {}
+    for line in open(RAW / "mentions.jsonl"):
+        m = json.loads(line)
+        if m["vid"] not in keep_set or m["stance"] not in ("rec", "strong_rec"):
+            continue
+        mentions.setdefault(m["vid"], []).append(m)
+
+    def year_strip(vid):
+        """One digit per year 2007-2026: recommending comments kept that year (export keeps 20 per video), capped at 9."""
+        c = [0] * (LAST_YEAR - FIRST_YEAR + 1)
+        for m in mentions.get(vid, []):
+            y = int(m["month"][:4])
+            if FIRST_YEAR <= y <= LAST_YEAR:
+                c[y - FIRST_YEAR] += 1
+        return "".join(str(min(x, 9)) for x in c)
+
     out = []
     for k, v in enumerate(keep):
         i = row[v["vid"]]
@@ -77,6 +94,8 @@ def main():
             "score": v["score"],
             "recs": v["hn"]["recommenders"],
             "years": [v["hn"]["first_year"], v["hn"]["last_year"]],
+            "rm": v["hn"]["rec_months"],
+            "ry": year_strip(v["vid"]),
             # facet affinity, z-score units ×10, so the client can re-weight without embeddings
             "f": [int(round(float(x) * 10)) for x in spec[i]],
             # nearest neighbours by embedding, with cosine ×100
@@ -84,12 +103,6 @@ def main():
             "rel": related.get(v["vid"], []),
         })
 
-    mentions = {}
-    for line in open(RAW / "mentions.jsonl"):
-        m = json.loads(line)
-        if m["vid"] not in keep_set or m["stance"] not in ("rec", "strong_rec"):
-            continue
-        mentions.setdefault(m["vid"], []).append(m)
     trimmed = {}
     for vid, ms in mentions.items():
         ms.sort(key=lambda m: (m["stance"] != "strong_rec", -len(m["quote"] or "")))
@@ -124,6 +137,7 @@ def main():
         "cats": cats,
         "areas": areas,
         "generated": "2026-10-31",
+        "years": [FIRST_YEAR, LAST_YEAR],
     }, open(OUT / "meta.json", "w"), separators=(",", ":"), ensure_ascii=False)
     for p in OUT.iterdir():
         print(f"{p.name:16} {p.stat().st_size / 1e6:.2f} MB")
