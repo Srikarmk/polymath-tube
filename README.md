@@ -16,9 +16,11 @@ against every thread.
 
 Raw cosine favours generic videos: an intro ML lecture scores well against half the profile. So each
 thread's similarity is z-scored, and half the video's average z across all threads is subtracted. A
-video's personal score is its strongest weighted thread, plus `0.6 × log(1 + HackerTube score)`, the
-number of months HN kept recommending it. The feed is picked greedily with a penalty for repeating a
-thread, so one interest can't fill the page.
+video's score is `0.7 ×` its strongest weighted thread, plus `0.6 × log(1 + HackerTube score)`, the
+number of months HN kept recommending it. The feed is then picked greedily across HackerTube's 16 areas
+and 150 topics: repeating a topic or an area costs points, and the first video from a new area earns
+some. My own work leads the feed and the rest of it ranges across everything HN watches (the first 36
+cards cover 34 topics). The sidebar browses those topics directly.
 
 In the browser, likes boost a video's embedding neighbours and the videos its HN recommenders also
 liked. "Not for me" pushes neighbours down, and videos you've already opened drop back. Thread weights

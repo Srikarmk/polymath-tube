@@ -23,7 +23,8 @@ export type Facet = { id: string; label: string; short: string; weight: number }
 
 export type Meta = {
   facets: Facet[];
-  cats: Record<string, { name: string; area: string }>;
+  cats: Record<string, { name: string; area: string; n: number }>;
+  areas: { id: string; name: string; cats: string[] }[];
   generated: string;
 };
 

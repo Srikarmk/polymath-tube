@@ -1,15 +1,13 @@
-import type { Data, Facet, Video } from "./data";
+import type { Data, Video } from "./data";
 import type { State } from "./store";
 
-export type Reason =
-  | { kind: "facet"; facet: Facet }
-  | { kind: "like"; from: Video }
-  | { kind: "match" };
-
-export type Ranked = { v: Video; score: number; reason: Reason };
+export type Ranked = { v: Video; score: number };
 
 const QUALITY = 0.6; // weight on log(1 + HackerTube score): how much HN's lasting love counts
-const DIVERSITY = 0.35; // penalty per earlier pick from the same thread
+const PERSONAL = 0.7; // weight on the strongest thread of my work
+const SAME_TOPIC = 0.6; // penalty per earlier pick in the same topic
+const SAME_AREA = 0.3; // penalty per earlier pick in the same area
+const NEW_AREA = 0.7; // bonus for the first pick from an area, so the feed spans HN, not just my threads
 
 export const quality = (v: Video) => QUALITY * Math.log1p(v.score);
 
@@ -17,7 +15,7 @@ export function weightsFor(data: Data, s: State) {
   return data.meta.facets.map((f) => s.weights[f.id] ?? f.weight);
 }
 
-/** Which thread of your work pulls this video in hardest, and how hard. */
+/** Which thread of my work pulls this video in hardest, and how hard. */
 export function affinity(v: Video, w: number[]) {
   let best = -Infinity;
   let arg = 0;
@@ -33,83 +31,76 @@ export function affinity(v: Video, w: number[]) {
 
 /** Videos near the ones you liked (by embedding and by shared HN recommenders), and away from hidden ones. */
 function likeSignals(data: Data, s: State) {
-  const boost = new Map<string, { b: number; from: Video }>();
-  const add = (id: string, b: number, from: Video) => {
-    const cur = boost.get(id);
-    if (!cur) boost.set(id, { b, from });
-    else {
-      const total = Math.min(cur.b + b, 2.5);
-      boost.set(id, { b: total, from: b > cur.b ? from : cur.from });
-    }
-  };
+  const boost = new Map<string, number>();
+  const add = (id: string, b: number) => boost.set(id, Math.min((boost.get(id) ?? 0) + b, 2.5));
   for (const id of s.liked) {
     const v = data.byId.get(id);
     if (!v) continue;
-    for (const [nid, cos] of v.sim) if (cos > 62) add(nid, ((cos - 62) / 25) * 1.4, v);
-    for (const nid of v.rel) add(nid, 0.5, v);
+    for (const [nid, cos] of v.sim) if (cos > 62) add(nid, ((cos - 62) / 25) * 1.4);
+    for (const nid of v.rel) add(nid, 0.5);
   }
-  const push = new Map<string, number>();
   for (const id of s.hidden) {
     const v = data.byId.get(id);
     if (!v) continue;
-    for (const [nid, cos] of v.sim) if (cos > 70) push.set(nid, (push.get(nid) ?? 0) + 0.6);
+    for (const [nid, cos] of v.sim) if (cos > 70) add(nid, -0.6);
   }
-  return { boost, push };
+  return boost;
 }
+
+const visible = (v: Video, hidden: Set<string>) => !hidden.has(v.id) && v.life !== "news" && v.recs > 0;
 
 export function forYou(data: Data, s: State, count: number): Ranked[] {
   const w = weightsFor(data, s);
-  const { boost, push } = likeSignals(data, s);
+  const boost = likeSignals(data, s);
   const hidden = new Set(s.hidden);
   const liked = new Set(s.liked);
   const seen = new Set(s.history.map((h) => h.id));
 
-  const pool: (Ranked & { thread: number })[] = [];
+  const pool: { v: Video; score: number; cat: string; area: string }[] = [];
   for (const v of data.videos) {
-    if (hidden.has(v.id) || liked.has(v.id) || v.life === "news" || v.recs === 0) continue;
-    const { best, arg } = affinity(v, w);
-    const lb = boost.get(v.id);
-    let score = best + quality(v) - (push.get(v.id) ?? 0) - (seen.has(v.id) ? 1.5 : 0);
-    let reason: Reason = { kind: "facet", facet: data.meta.facets[arg] };
-    if (lb) {
-      score += lb.b;
-      if (lb.b > 0.8) reason = { kind: "like", from: lb.from };
-    }
-    pool.push({ v, score, reason, thread: lb && lb.b > 0.8 ? -1 : arg });
+    if (!visible(v, hidden) || liked.has(v.id)) continue;
+    const score =
+      PERSONAL * Math.max(0, affinity(v, w).best) + quality(v) + (boost.get(v.id) ?? 0) - (seen.has(v.id) ? 1.5 : 0);
+    const cat = v.cats[0];
+    pool.push({ v, score, cat, area: data.meta.cats[cat]?.area ?? "" });
   }
   pool.sort((a, b) => b.score - a.score);
-  const candidates = pool.slice(0, Math.max(400, count * 4));
+  const candidates = pool.slice(0, Math.max(1500, count * 10));
 
-  // Greedy pick with a penalty for repeating a thread, so one strong interest can't fill the page.
-  const used = new Map<number, number>();
+  // Greedy pick: repeating a topic or area costs, opening a new area pays.
+  const catUsed = new Map<string, number>();
+  const areaUsed = new Map<string, number>();
+  const taken = new Uint8Array(candidates.length);
   const out: Ranked[] = [];
-  const taken = new Set<number>();
-  while (out.length < count && taken.size < candidates.length) {
+  while (out.length < count && out.length < candidates.length) {
     let bi = -1;
     let bs = -Infinity;
     for (let i = 0; i < candidates.length; i++) {
-      if (taken.has(i)) continue;
+      if (taken[i]) continue;
       const c = candidates[i];
-      const adj = c.score - DIVERSITY * (used.get(c.thread) ?? 0);
+      const a = areaUsed.get(c.area) ?? 0;
+      const adj = c.score - SAME_TOPIC * (catUsed.get(c.cat) ?? 0) - SAME_AREA * a + (a === 0 ? NEW_AREA : 0);
       if (adj > bs) {
         bs = adj;
         bi = i;
       }
     }
-    taken.add(bi);
+    taken[bi] = 1;
     const c = candidates[bi];
-    used.set(c.thread, (used.get(c.thread) ?? 0) + 1);
-    out.push({ v: c.v, score: c.score, reason: c.reason });
+    catUsed.set(c.cat, (catUsed.get(c.cat) ?? 0) + 1);
+    areaUsed.set(c.area, (areaUsed.get(c.area) ?? 0) + 1);
+    out.push({ v: c.v, score: c.score });
   }
   return out;
 }
 
-export function byThread(data: Data, s: State, j: number, count: number): Ranked[] {
+/** A topic or a whole area: HN's most lasting picks first, nudged a little toward my work. */
+export function byTopic(data: Data, s: State, match: (v: Video) => boolean, count: number): Ranked[] {
+  const w = weightsFor(data, s);
   const hidden = new Set(s.hidden);
-  const facet = data.meta.facets[j];
   return data.videos
-    .filter((v) => !hidden.has(v.id) && v.life !== "news" && v.recs > 0)
-    .map((v) => ({ v, score: v.f[j] / 10 + quality(v), reason: { kind: "facet", facet } as Reason }))
+    .filter((v) => visible(v, hidden) && match(v))
+    .map((v) => ({ v, score: quality(v) + 0.25 * Math.max(0, affinity(v, w).best) }))
     .sort((a, b) => b.score - a.score)
     .slice(0, count);
 }
@@ -135,7 +126,7 @@ export function search(data: Data, query: string, count: number): Ranked[] {
     }
     if (hits < Math.ceil(terms.length * 0.6)) continue;
     if (terms.length > 1 && (title.includes(phrase) || meta.includes(phrase))) s += 4;
-    out.push({ v, score: s + quality(v), reason: { kind: "match" } });
+    out.push({ v, score: s + quality(v) });
   }
   return out.sort((a, b) => b.score - a.score).slice(0, count);
 }

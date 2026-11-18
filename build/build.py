@@ -103,7 +103,18 @@ def main():
         } for m in ms[:MENTIONS_PER_VIDEO]]
 
     tax = json.load(open(RAW / "taxonomy.json"))
-    cats = {c["id"]: {"name": c["name"], "area": a["name"]} for a in tax["areas"] for c in a["categories"]}
+    cats = {c["id"]: {"name": c["name"], "area": a["id"]} for a in tax["areas"] for c in a["categories"]}
+    counts = {}
+    for v in out:
+        for c in v["cats"]:
+            counts[c] = counts.get(c, 0) + 1
+    areas = [{
+        "id": a["id"],
+        "name": a["name"],
+        "cats": [c["id"] for c in sorted(a["categories"], key=lambda c: -counts.get(c["id"], 0)) if counts.get(c["id"])],
+    } for a in tax["areas"]]
+    for cid in cats:
+        cats[cid]["n"] = counts.get(cid, 0)
 
     OUT.mkdir(parents=True, exist_ok=True)
     json.dump(out, open(OUT / "videos.json", "w"), separators=(",", ":"), ensure_ascii=False)
@@ -111,6 +122,7 @@ def main():
     json.dump({
         "facets": [{k: f[k] for k in ("id", "label", "short", "weight")} for f in facets],
         "cats": cats,
+        "areas": areas,
         "generated": "2026-10-31",
     }, open(OUT / "meta.json", "w"), separators=(",", ":"), ensure_ascii=False)
     for p in OUT.iterdir():

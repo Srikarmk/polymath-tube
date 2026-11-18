@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { hnUrl, loadData, loadMentions, thumb, type Data, type Mention, type Video } from "./data";
-import { byThread, forYou, search, weightsFor, affinity, type Ranked, type Reason } from "./rank";
+import { byTopic, forYou, search, weightsFor, type Ranked } from "./rank";
 import { actions, useStore } from "./store";
 
 // ---------- routing (hash, so the site is fully static) ----------
 
 type Route =
   | { page: "home" }
-  | { page: "thread"; id: string }
+  | { page: "topic"; id: string }
+  | { page: "area"; id: string }
   | { page: "watch"; id: string }
   | { page: "search"; q: string }
   | { page: "liked" | "later" | "history" | "threads" | "about" };
@@ -19,8 +20,10 @@ function parse(hash: string): Route {
   switch (parts[0]) {
     case "watch":
       return { page: "watch", id: parts[1] };
-    case "thread":
-      return { page: "thread", id: parts[1] };
+    case "topic":
+      return { page: "topic", id: parts[1] };
+    case "area":
+      return { page: "area", id: parts[1] };
     case "search":
       return { page: "search", q: params.get("q") ?? "" };
     case "liked":
@@ -85,8 +88,10 @@ function Page({ data, route }: { data: Data; route: Route }) {
   switch (route.page) {
     case "home":
       return <Home data={data} />;
-    case "thread":
-      return <Thread data={data} id={route.id} />;
+    case "topic":
+      return <Topic data={data} id={route.id} />;
+    case "area":
+      return <Area data={data} id={route.id} />;
     case "watch":
       return <Watch data={data} id={route.id} />;
     case "search":
@@ -157,58 +162,61 @@ function Header({ route }: { route: Route }) {
   );
 }
 
+/** The area a route is in, so the rail can open it. */
+function currentArea(data: Data, route: Route) {
+  if (route.page === "area") return route.id;
+  if (route.page === "topic") return data.meta.cats[route.id]?.area;
+  if (route.page === "watch") {
+    const v = data.byId.get(route.id);
+    return v ? data.meta.cats[v.cats[0]]?.area : undefined;
+  }
+  return undefined;
+}
+
 function Rail({ data, route }: { data: Data; route: Route }) {
-  const s = useStore();
-  const w = weightsFor(data, s);
-  const max = Math.max(...w, 1);
+  const openArea = currentArea(data, route);
   return (
-    <aside className="rail" aria-label="Threads">
+    <aside className="rail" aria-label="Topics">
       <a className="rail-home" href="#/" aria-current={route.page === "home" ? "page" : undefined}>
         For you
       </a>
-      <p className="rail-head">Threads from my work</p>
-      <ul>
-        {data.meta.facets.map((f, j) => (
-          <li key={f.id}>
-            <a
-              href={`#/thread/${f.id}`}
-              aria-current={route.page === "thread" && route.id === f.id ? "page" : undefined}
-              title={f.label}
-            >
-              <span className="rail-name">{f.short}</span>
-              <span className="rail-bar" style={{ ["--w" as string]: `${(w[j] / max) * 100}%` }} aria-hidden="true" />
-            </a>
-          </li>
-        ))}
+      <p className="rail-head">Topics</p>
+      <ul className="areas">
+        {data.meta.areas.map((a) => {
+          const open = a.id === openArea;
+          return (
+            <li key={a.id} className={open ? "open" : undefined}>
+              <a href={`#/area/${a.id}`} aria-current={route.page === "area" && route.id === a.id ? "page" : undefined}>
+                {a.name}
+              </a>
+              {open && (
+                <ul className="cats">
+                  {a.cats.map((c) => (
+                    <li key={c}>
+                      <a href={`#/topic/${c}`} aria-current={route.page === "topic" && route.id === c ? "page" : undefined}>
+                        {data.meta.cats[c].name}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </li>
+          );
+        })}
       </ul>
-      <a className="rail-tune" href="#/threads" aria-current={route.page === "threads" ? "page" : undefined}>
-        Tune the threads
-      </a>
     </aside>
   );
 }
 
 // ---------- cards ----------
 
-function ReasonLine({ reason }: { reason: Reason }) {
-  if (reason.kind === "facet")
-    return (
-      <p className="reason">
-        <span className="tick" aria-hidden="true" />
-        From {reason.facet.label}
-      </p>
-    );
-  if (reason.kind === "like")
-    return (
-      <p className="reason liked">
-        <span className="tick" aria-hidden="true" />
-        Because you liked {reason.from.t}
-      </p>
-    );
-  return null;
+function TopicLink({ data, id }: { data: Data; id: string }) {
+  const c = data.meta.cats[id];
+  if (!c) return null;
+  return <a className="topic" href={`#/topic/${id}`}>{c.name}</a>;
 }
 
-function Card({ r }: { r: Ranked }) {
+function Card({ data, r }: { data: Data; r: Ranked }) {
   const { v } = r;
   return (
     <article className="card">
@@ -220,18 +228,18 @@ function Card({ r }: { r: Ranked }) {
         <h3>{v.t}</h3>
       </a>
       <p className="channel">{v.ch}</p>
-      <ReasonLine reason={r.reason} />
+      <TopicLink data={data} id={v.cats[0]} />
       <p className="hover-why">{v.why}</p>
     </article>
   );
 }
 
-function Grid({ items, empty }: { items: Ranked[]; empty?: React.ReactNode }) {
+function Grid({ data, items, empty }: { data: Data; items: Ranked[]; empty?: React.ReactNode }) {
   if (!items.length) return <div className="empty">{empty}</div>;
   return (
     <div className="grid">
       {items.map((r) => (
-        <Card key={r.v.id} r={r} />
+        <Card key={r.v.id} data={data} r={r} />
       ))}
     </div>
   );
@@ -254,30 +262,58 @@ function Home({ data }: { data: Data }) {
       <section className="intro">
         <h1>Talks Hacker News keeps recommending, ranked against what I build.</h1>
         <p>
-          Each video carries the thread of my work that pulled it in. Liking a video brings its neighbours
-          forward; “Not for me” pushes them back.
+          My own work leads, and the rest of the feed ranges across everything HN watches. Liking a video brings
+          its neighbours forward; “Not for me” pushes them back. <a href="#/threads">Tune what it favours</a>
         </p>
       </section>
-      <Grid items={items} />
+      <Grid data={data} items={items} />
       <button className="more" onClick={more}>Show more</button>
     </>
   );
 }
 
-function Thread({ data, id }: { data: Data; id: string }) {
+function Topic({ data, id }: { data: Data; id: string }) {
   const s = useStore();
-  const j = data.meta.facets.findIndex((f) => f.id === id);
   const [n, more] = useMore(36, id);
-  const items = useMemo(() => (j < 0 ? [] : byThread(data, s, j, n)), [data, s, j, n]);
-  if (j < 0) return <p className="empty">No thread called “{id}”. <a href="#/threads">See all threads</a></p>;
-  const f = data.meta.facets[j];
+  const c = data.meta.cats[id];
+  const items = useMemo(() => (c ? byTopic(data, s, (v) => v.cats.includes(id), n) : []), [data, s, id, n, c]);
+  if (!c) return <p className="empty">No topic called “{id}”. <a href="#/">Back to For you</a></p>;
+  const area = data.meta.areas.find((a) => a.id === c.area);
   return (
     <>
       <section className="intro">
-        <h1>{f.short}</h1>
-        <p>The videos closest to {f.label}, with HN's most lasting picks first.</p>
+        {area && <a className="crumb" href={`#/area/${area.id}`}>{area.name}</a>}
+        <h1>{c.name}</h1>
+        <p>{c.n} videos. HN's most lasting picks come first.</p>
       </section>
-      <Grid items={items} />
+      <Grid data={data} items={items} />
+      {items.length < c.n && <button className="more" onClick={more}>Show more</button>}
+    </>
+  );
+}
+
+function Area({ data, id }: { data: Data; id: string }) {
+  const s = useStore();
+  const [n, more] = useMore(36, id);
+  const area = data.meta.areas.find((a) => a.id === id);
+  const items = useMemo(
+    () => (area ? byTopic(data, s, (v) => data.meta.cats[v.cats[0]]?.area === id, n) : []),
+    [data, s, id, n, area],
+  );
+  if (!area) return <p className="empty">No area called “{id}”. <a href="#/">Back to For you</a></p>;
+  return (
+    <>
+      <section className="intro">
+        <h1>{area.name}</h1>
+        <ul className="chips">
+          {area.cats.map((c) => (
+            <li key={c}>
+              <a href={`#/topic/${c}`}>{data.meta.cats[c].name}</a>
+            </li>
+          ))}
+        </ul>
+      </section>
+      <Grid data={data} items={items} />
       <button className="more" onClick={more}>Show more</button>
     </>
   );
@@ -291,19 +327,18 @@ function Search({ data, q }: { data: Data; q: string }) {
         <h1>“{q}”</h1>
         <p>{items.length ? `${items.length === 60 ? "Top 60" : items.length} matches in titles, channels, topics and summaries.` : ""}</p>
       </section>
-      <Grid items={items} empty={<>Nothing matches “{q}”. Try a broader word, or browse a thread on the left.</>} />
+      <Grid data={data} items={items} empty={<>Nothing matches “{q}”. Try a broader word, or browse a topic on the left.</>} />
     </>
   );
 }
 
 function Library({ data, which }: { data: Data; which: "liked" | "later" | "history" }) {
   const s = useStore();
-  const w = weightsFor(data, s);
   const ids = which === "history" ? s.history.map((h) => h.id) : s[which];
   const items: Ranked[] = ids
     .map((id) => data.byId.get(id))
     .filter((v): v is Video => !!v)
-    .map((v) => ({ v, score: 0, reason: { kind: "facet", facet: data.meta.facets[affinity(v, w).arg] } }));
+    .map((v) => ({ v, score: 0 }));
   const title = { liked: "Liked", later: "Watch later", history: "History" }[which];
   const empty = {
     liked: "Nothing liked yet. Liking a video moves similar ones up your feed.",
@@ -318,7 +353,7 @@ function Library({ data, which }: { data: Data; which: "liked" | "later" | "hist
           <button className="ghost" onClick={actions.clearHistory}>Clear history</button>
         )}
       </section>
-      <Grid items={items} empty={empty} />
+      <Grid data={data} items={items} empty={empty} />
     </>
   );
 }
@@ -331,7 +366,7 @@ function Threads({ data }: { data: Data }) {
       <section className="intro row">
         <div>
           <h1>Tune the threads</h1>
-          <p>Each thread is one strand of my projects. Turn one up and its videos rise in For you; set it to zero to drop it.</p>
+          <p>Each thread is one strand of my projects. Turn one up and its videos rise in For you; set it to zero to drop it. Topics outside these threads still fill the rest of the feed.</p>
         </div>
         <button className="ghost" onClick={actions.resetWeights}>Reset</button>
       </section>
@@ -339,7 +374,7 @@ function Threads({ data }: { data: Data }) {
         {data.meta.facets.map((f, j) => (
           <li key={f.id}>
             <div>
-              <a href={`#/thread/${f.id}`} className="tune-name">{f.short}</a>
+              <span className="tune-name">{f.short}</span>
               <p>{f.label}</p>
             </div>
             <input
@@ -386,9 +421,6 @@ function Watch({ data, id }: { data: Data; id: string }) {
   }, [id]);
 
   if (!v) return <p className="empty">This video isn't in the list. <a href="#/">Back to For you</a></p>;
-  const w = weightsFor(data, s);
-  const { arg } = affinity(v, w);
-  const facet = data.meta.facets[arg];
   const liked = s.liked.includes(v.id);
   const later = s.later.includes(v.id);
   const hidden = s.hidden.includes(v.id);
@@ -423,10 +455,13 @@ function Watch({ data, id }: { data: Data; id: string }) {
         </div>
 
         <section className="why-here">
-          <p className="reason">
-            <span className="tick" aria-hidden="true" />
-            Closest to <a href={`#/thread/${facet.id}`}>{facet.short.toLowerCase()}</a>, from {facet.label}
-          </p>
+          <ul className="chips">
+            {v.cats.map((c) => (
+              <li key={c}>
+                <TopicLink data={data} id={c} />
+              </li>
+            ))}
+          </ul>
           <p className="summary">{v.sum}</p>
           <p className="hn-why">{v.why}</p>
           <p className="stats">
@@ -503,7 +538,8 @@ function About({ data }: { data: Data }) {
         data from Yeas &amp; Nays and bostonmove, and so on. Each description is embedded with the same model HackerTube
         used (bge-small), and every video is scored against every thread. A video's score is its strongest thread,
         measured against how much it matches the profile in general, plus a share of how long HN has kept recommending
-        it. Picks are spread across threads so one interest can't fill the page.
+        it. The feed then spreads out: a second video from the same topic or area costs points, and the first one from
+        a new area earns some, so For you ranges across HN's 16 areas instead of circling my own projects.
       </p>
       <p>
         Likes, Watch later, history and thread weights stay in this browser. Nothing is sent anywhere. Videos play
