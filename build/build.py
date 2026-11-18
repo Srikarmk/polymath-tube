@@ -130,6 +130,9 @@ def main():
         cats[cid]["n"] = counts.get(cid, 0)
 
     OUT.mkdir(parents=True, exist_ok=True)
+    # Video vectors for semantic search in the browser: int8, one row per video in videos.json order.
+    scale = 127.0 / float(np.abs(E).max())
+    (np.clip(np.round(E * scale), -127, 127).astype(np.int8)).tofile(OUT / "emb.bin")
     json.dump(out, open(OUT / "videos.json", "w"), separators=(",", ":"), ensure_ascii=False)
     json.dump(trimmed, open(OUT / "mentions.json", "w"), separators=(",", ":"), ensure_ascii=False)
     json.dump({
@@ -138,6 +141,7 @@ def main():
         "areas": areas,
         "generated": "2026-10-31",
         "years": [FIRST_YEAR, LAST_YEAR],
+        "emb": {"dim": int(E.shape[1]), "rows": int(E.shape[0]), "model": "Xenova/bge-small-en-v1.5"},
     }, open(OUT / "meta.json", "w"), separators=(",", ":"), ensure_ascii=False)
     for p in OUT.iterdir():
         print(f"{p.name:16} {p.stat().st_size / 1e6:.2f} MB")

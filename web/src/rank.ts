@@ -168,6 +168,46 @@ export function countWhere(data: Data, s: State, match: (v: Video) => boolean) {
   return n;
 }
 
+/** Keyword hits for one video: title 3, channel/topic/tags 2, summary 1 per matched term. */
+function keyword(data: Data, v: Video, terms: string[], phrase: string) {
+  const title = v.t.toLowerCase();
+  const meta = `${v.ch} ${v.topic} ${v.tags.join(" ")} ${v.cats.map((c) => data.meta.cats[c]?.name ?? "").join(" ")}`.toLowerCase();
+  const body = `${v.sum} ${v.why}`.toLowerCase();
+  let s = 0;
+  let hits = 0;
+  for (const t of terms) {
+    const re = new RegExp(`\\b${t.replace(/[+#]/g, "\\$&")}`);
+    const h = (re.test(title) ? 3 : 0) + (re.test(meta) ? 2 : 0) + (re.test(body) ? 1 : 0);
+    if (h) hits++;
+    s += h;
+  }
+  if (terms.length > 1 && (title.includes(phrase) || meta.includes(phrase))) s += 4;
+  return { s, hits };
+}
+
+/**
+ * Meaning first, words second. `sem` is the cosine of the query with every video (videos.json order).
+ * A video ranks on its cosine, plus a bonus for words it shares with the query, plus a little of HN's
+ * lasting love; below a cosine of 0.6 only a keyword match keeps it in.
+ */
+const STOP = new Set(
+  "a an and are as at be best by can do does for from good great how i in into is it its me my of on or really actually about the to talk talks video videos what when where which who why with work works working you your".split(" "),
+);
+
+export function semanticSearch(data: Data, query: string, sem: Float32Array, count: number): Ranked[] {
+  const terms = tokenize(query).filter((t) => t.length > 1 && !STOP.has(t));
+  const phrase = query.toLowerCase().trim();
+  const out: Ranked[] = [];
+  data.videos.forEach((v, i) => {
+    const c = sem[i];
+    const k = terms.length ? keyword(data, v, terms, phrase) : { s: 0, hits: 0 };
+    const strongWords = k.hits >= Math.ceil(terms.length * 0.6) && k.s > 0;
+    if (c < 0.6 && !strongWords) return;
+    out.push({ v, score: 10 * c + 0.12 * Math.min(k.s, 10) + 0.3 * quality(v) });
+  });
+  return out.sort((a, b) => b.score - a.score).slice(0, count);
+}
+
 const tokenize = (s: string) => s.toLowerCase().match(/[a-z0-9+#]+/g) ?? [];
 
 export function search(data: Data, query: string, count: number): Ranked[] {
@@ -192,4 +232,36 @@ export function search(data: Data, query: string, count: number): Ranked[] {
     out.push({ v, score: s + quality(v) });
   }
   return out.sort((a, b) => b.score - a.score).slice(0, count);
+}
+
+/** A shelf: videos matching `pred`, HN's lasting picks nudged toward your interests, mixed daily. */
+export function shelf(data: Data, s: State, pred: (v: Video) => boolean, count: number, exclude: Set<string>): Ranked[] {
+  const w = weightsFor(data, s);
+  const hidden = new Set(s.hidden);
+  const seed = today() * 17 + s.shuffle;
+  const chUsed = new Set<string>();
+  return data.videos
+    .filter((v) => visible(v, hidden) && !exclude.has(v.id) && pred(v))
+    .map((v) => ({ v, score: quality(v) + 0.5 * Math.max(0, affinity(v, w).best) + 0.8 * hash01(v.id, seed) }))
+    .sort((a, b) => b.score - a.score)
+    .filter((r) => (chUsed.has(r.v.ch) ? false : (chUsed.add(r.v.ch), true)))
+    .slice(0, count);
+}
+
+/** Year strips are one digit per year from FIRST_YEAR; is year y lit for v? */
+export const litIn = (data: Data, v: Video, y: number) => (v.ry[y - data.meta.years[0]] ?? "0") !== "0";
+
+/** One good video at random: weighted toward HN's lasting picks, never hidden or already watched. */
+export function surprise(data: Data, s: State): Video | undefined {
+  const hidden = new Set(s.hidden);
+  const seen = new Set(s.history.map((h) => h.id));
+  const pool = data.videos.filter((v) => visible(v, hidden) && !seen.has(v.id) && v.score >= 4);
+  let total = 0;
+  for (const v of pool) total += v.score;
+  let r = Math.random() * total;
+  for (const v of pool) {
+    r -= v.score;
+    if (r <= 0) return v;
+  }
+  return pool[0];
 }

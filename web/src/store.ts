@@ -11,10 +11,11 @@ export type State = {
   weights: Record<string, number>;
   shuffle: number;
   type: string | null;
+  autoplay: boolean;
 };
 
 const KEY = "polymath-tube:v1";
-const empty: State = { liked: [], later: [], history: [], hidden: [], weights: {}, shuffle: 0, type: null };
+const empty: State = { liked: [], later: [], history: [], hidden: [], weights: {}, shuffle: 0, type: null, autoplay: true };
 
 function read(): State {
   try {
@@ -37,6 +38,8 @@ function set(next: State) {
   }
   listeners.forEach((l) => l());
 }
+
+export const snapshot = () => state;
 
 export function useStore(): State {
   return useSyncExternalStore(
@@ -63,4 +66,21 @@ export const actions = {
   resetWeights: () => set({ ...state, weights: {} }),
   shuffle: () => set({ ...state, shuffle: state.shuffle + 1 }),
   setType: (type: string | null) => set({ ...state, type }),
+  toggleAutoplay: () => set({ ...state, autoplay: !state.autoplay }),
+  /** Replace the library with an exported one; unknown fields are dropped, missing ones keep defaults. */
+  importState: (raw: unknown) => {
+    const r = (raw ?? {}) as Partial<State>;
+    const ids = (x: unknown) => (Array.isArray(x) ? x.filter((i): i is string => typeof i === "string") : []);
+    set({
+      ...empty,
+      liked: ids(r.liked),
+      later: ids(r.later),
+      hidden: ids(r.hidden),
+      history: Array.isArray(r.history)
+        ? r.history.filter((h) => h && typeof h.id === "string").map((h) => ({ id: h.id, at: Number(h.at) || 0 }))
+        : [],
+      weights: r.weights && typeof r.weights === "object" ? r.weights : {},
+      autoplay: r.autoplay !== false,
+    });
+  },
 };

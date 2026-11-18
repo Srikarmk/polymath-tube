@@ -1,17 +1,23 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { hnUrl, loadData, loadMentions, thumb, type Data, type Mention, type Video } from "./data";
 import {
   byTopic,
   countWhere,
   forYou,
+  litIn,
   search,
+  semanticSearch,
+  shelf,
+  surprise,
   typeMatch,
   weightsFor,
   TYPE_GROUPS,
   type Ranked,
   type TopicSort,
 } from "./rank";
-import { actions, useStore } from "./store";
+import { semanticScores } from "./semantic";
+import { actions, snapshot, useStore } from "./store";
+import { dismiss, toast, useToast } from "./toast";
 
 // ---------- routing (hash, so the site is fully static) ----------
 
@@ -19,7 +25,7 @@ type Route =
   | { page: "home" }
   | { page: "topic"; id: string }
   | { page: "area"; id: string }
-  | { page: "watch"; id: string }
+  | { page: "watch"; id: string; auto: boolean }
   | { page: "search"; q: string }
   | { page: "liked" | "later" | "history" | "tune" | "about" };
 
@@ -29,7 +35,7 @@ function parse(hash: string): Route {
   const params = new URLSearchParams(qs ?? "");
   switch (parts[0]) {
     case "watch":
-      return { page: "watch", id: parts[1] };
+      return { page: "watch", id: parts[1], auto: params.get("auto") === "1" };
     case "topic":
       return { page: "topic", id: parts[1] };
     case "area":
@@ -79,6 +85,12 @@ const paths = {
   menu: "M2.5 4.5h11M2.5 8h11M2.5 11.5h11",
   shuffle: "M2.5 4.5h2.2c3.6 0 3.4 7 7 7h1.8M2.5 11.5h2.2c1.2 0 1.9-.8 2.5-1.8M9 6.3c.6-1 1.3-1.8 2.5-1.8h2M12 2.8l1.7 1.7L12 6.2M12 9.8l1.7 1.7-1.7 1.7",
   back: "M10 3.5 5.5 8l4.5 4.5",
+  spark: "M8 2v3M8 11v3M2 8h3M11 8h3M4 4l1.8 1.8M10.2 10.2 12 12M12 4l-1.8 1.8M5.8 10.2 4 12",
+  link: "M6.5 9.5l3-3M7 4.5l1-1a2.5 2.5 0 0 1 3.5 3.5l-1 1M9 11.5l-1 1A2.5 2.5 0 0 1 4.5 9l1-1",
+  keys: "M2 4.5h12v7H2zM4.5 7h.01M7 7h.01M9.5 7h.01M12 7h.01M5 9.5h6",
+  down: "M8 2.5v8M4.5 7.5 8 11l3.5-3.5M3 13.5h10",
+  up: "M8 13.5v-8M4.5 8.5 8 5l3.5 3.5M3 2.5h10",
+  next: "M4 3.5v9l6.5-4.5zM12 3.5v9",
 };
 
 function Icon({ name, size = 16 }: { name: keyof typeof paths; size?: number }) {
@@ -90,10 +102,100 @@ function Icon({ name, size = 16 }: { name: keyof typeof paths; size?: number }) 
 }
 
 function Mark() {
+  const id = useId().replace(/:/g, "");
   return (
     <svg className="mark-glyph" viewBox="0 0 24 24" aria-hidden="true">
-      <rect width="24" height="24" rx="6" />
-      <path d="M9.5 7v10l8-5z" />
+      <defs>
+        <linearGradient id={`mk${id}`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#ffb347" />
+          <stop offset="0.55" stopColor="#ff2d95" />
+          <stop offset="1" stopColor="#8a3ffc" />
+        </linearGradient>
+      </defs>
+      <rect width="24" height="24" rx="7" fill={`url(#mk${id})`} />
+      <path d="M9.5 7v10l8-5z" fill="#0d0716" />
+    </svg>
+  );
+}
+
+// ---------- the sunset: drawn in code, no borrowed art ----------
+
+function Palm({ x, s, flip = false }: { x: number; s: number; flip?: boolean }) {
+  const f = flip ? -1 : 1;
+  return (
+    <g transform={`translate(${x} 300) scale(${f * s} ${s})`} fill="#0d0716">
+      <path d="M-3 0 C 2 -60 10 -120 22 -168 L 29 -166 C 18 -118 10 -60 5 0 Z" />
+      <g transform="translate(25 -168)">
+        <path d="M0 0 C -30 -18 -62 -12 -84 8 C -58 -4 -30 -4 0 6 Z" />
+        <path d="M0 0 C -18 -34 -50 -46 -76 -38 C -46 -30 -22 -18 -2 6 Z" />
+        <path d="M0 0 C 8 -36 32 -54 58 -54 C 34 -44 16 -24 4 4 Z" />
+        <path d="M0 0 C 30 -18 62 -14 86 6 C 58 -4 30 -2 2 6 Z" />
+        <path d="M0 0 C 26 4 50 22 60 48 C 40 26 20 14 0 8 Z" />
+        <path d="M0 0 C -24 6 -44 26 -50 52 C -34 30 -18 16 0 8 Z" />
+      </g>
+    </g>
+  );
+}
+
+function Sunset() {
+  const stripes = [0, 1, 2, 3, 4, 5];
+  return (
+    <svg className="sunset" viewBox="0 0 1200 300" preserveAspectRatio="xMaxYMax slice" aria-hidden="true">
+      <defs>
+        <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#1a0b33" />
+          <stop offset="0.38" stopColor="#5b1d8f" />
+          <stop offset="0.6" stopColor="#d12a8a" />
+          <stop offset="0.8" stopColor="#ff6b4a" />
+          <stop offset="0.96" stopColor="#ffb347" />
+        </linearGradient>
+        <linearGradient id="sun" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#ffe08a" />
+          <stop offset="0.5" stopColor="#ff9a4a" />
+          <stop offset="1" stopColor="#ff2d95" />
+        </linearGradient>
+        <linearGradient id="sea" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#2a0e4d" />
+          <stop offset="1" stopColor="#0d0716" />
+        </linearGradient>
+        <mask id="sunCut">
+          <rect x="0" y="0" width="1200" height="300" fill="#fff" />
+          {stripes.map((i) => (
+            <rect key={i} x="0" y={168 + i * 11} width="1200" height={2 + i * 1.3} fill="#000" />
+          ))}
+        </mask>
+      </defs>
+      <rect width="1200" height="300" fill="url(#sky)" />
+      <circle cx="860" cy="236" r="118" fill="url(#sun)" mask="url(#sunCut)" />
+      {/* skyline: an original row of towers on the waterline */}
+      <path
+        fill="#24103f"
+        d="M600 236 V196 h18 v-26 h22 v26 h10 v-58 h26 v58 h14 v-34 h20 v34 h8 v-82 h30 v82 h12 v-46 h24 v46 h16 v-20 h28 v20 h10 v-64 h20 v64 h22 v-30 h26 v30 h14 v-52 h22 v52 h20 v-24 h30 v24 h18 v-40 h26 v40 h16 v-18 h34 V236 Z"
+      />
+      <g fill="#ff2d95" opacity="0.55">
+        {[[700, 168], [706, 180], [770, 150], [776, 170], [846, 190], [930, 196], [1000, 200], [1074, 206]].map(([x, y], i) => (
+          <rect key={i} x={x} y={y} width="3" height="3" />
+        ))}
+      </g>
+      <g fill="#1de9d0" opacity="0.5">
+        {[[704, 158], [774, 160], [852, 204], [936, 186], [1080, 214]].map(([x, y], i) => (
+          <rect key={i} x={x} y={y} width="3" height="3" />
+        ))}
+      </g>
+      <rect y="236" width="1200" height="64" fill="url(#sea)" />
+      <g fill="#ffb347">
+        {[[810, 244, 100], [828, 252, 64], [842, 260, 36], [852, 268, 18]].map(([x, y, w], i) => (
+          <rect key={i} x={x} y={y} width={w} height="2" opacity={0.75 - i * 0.15} />
+        ))}
+      </g>
+      <g fill="#1de9d0" opacity="0.35">
+        <rect x="620" y="250" width="70" height="1.5" />
+        <rect x="1010" y="258" width="90" height="1.5" />
+        <rect x="560" y="272" width="40" height="1.5" />
+      </g>
+      <Palm x={560} s={0.95} />
+      <Palm x={1160} s={1.15} flip />
+      <Palm x={1105} s={0.78} />
     </svg>
   );
 }
@@ -125,12 +227,34 @@ function YearStrip({ data, v, big = false }: { data: Data; v: Video; big?: boole
   );
 }
 
+// ---------- shared actions with feedback ----------
+
+function hideWithUndo(v: Video) {
+  actions.hide(v.id);
+  toast(`Hidden “${v.t.slice(0, 48)}${v.t.length > 48 ? "…" : ""}”. Similar videos move down.`, {
+    label: "Undo",
+    run: () => actions.unhide(v.id),
+  });
+}
+
+function toggleLaterWithNote(v: Video) {
+  const was = snapshot().later.includes(v.id);
+  actions.toggleLater(v.id);
+  toast(was ? "Removed from Watch later" : "Saved to Watch later");
+}
+
+function surpriseMe(data: Data) {
+  const v = surprise(data, snapshot());
+  if (v) go(`#/watch/${v.id}`);
+}
+
 // ---------- app ----------
 
 export default function App() {
   const [data, setData] = useState<Data | null>(null);
   const [err, setErr] = useState(false);
   const [menu, setMenu] = useState(false);
+  const [help, setHelp] = useState(false);
   const route = useRoute();
   const load = () => {
     setErr(false);
@@ -138,6 +262,7 @@ export default function App() {
   };
   useEffect(load, []);
   useEffect(() => setMenu(false), [route]);
+  useShortcuts(data, route, setHelp);
 
   return (
     <div className="shell">
@@ -145,13 +270,13 @@ export default function App() {
         <div className="side-head">
           <a className="mark" href="#/" aria-label="Polymath Tube, For you">
             <Mark />
-            <span>Polymath Tube</span>
+            <span className="wordmark">Polymath Tube</span>
           </a>
           <button className="icon-btn side-close" onClick={() => setMenu(false)} aria-label="Close menu">
             <Icon name="x" />
           </button>
         </div>
-        <Nav data={data} route={route} />
+        <Nav data={data} route={route} onHelp={() => setHelp(true)} />
       </aside>
 
       <header className="top">
@@ -162,9 +287,12 @@ export default function App() {
           <Mark />
         </a>
         <SearchBox route={route} />
-        <p className="stamp">
-          {data ? `${fmt(data.videos.length)} videos` : ""} <span>HackerTube data, Oct 31, 2026</span>
-        </p>
+        {data && (
+          <button className="btn ghost surprise" onClick={() => surpriseMe(data)} title="Surprise me (r)">
+            <Icon name="spark" />
+            <span>Surprise me</span>
+          </button>
+        )}
       </header>
 
       <main className="canvas" id="main">
@@ -181,9 +309,13 @@ export default function App() {
           <a href="https://hackertube.org" target="_blank" rel="noreferrer">HackerTube</a>'s open data (ODC-By 1.0),
           built from the{" "}
           <a href="https://huggingface.co/datasets/open-index/hacker-news" target="_blank" rel="noreferrer">Hacker News archive</a>.
-          Comments remain the work of their authors. <a href="#/about">How it works</a>
+          Comments remain the work of their authors. {data ? `${fmt(data.videos.length)} videos, data from Oct 31, 2026.` : ""}{" "}
+          <a href="#/about">How it works</a>
         </footer>
       </main>
+
+      {help && <Help onClose={() => setHelp(false)} />}
+      <ToastView />
     </div>
   );
 }
@@ -197,7 +329,7 @@ function Page({ data, route }: { data: Data; route: Route }) {
     case "area":
       return <Area data={data} id={route.id} />;
     case "watch":
-      return <Watch data={data} id={route.id} />;
+      return <Watch data={data} id={route.id} auto={route.auto} />;
     case "search":
       return <Search data={data} q={route.q} />;
     case "liked":
@@ -209,6 +341,118 @@ function Page({ data, route }: { data: Data; route: Route }) {
     case "about":
       return <About data={data} />;
   }
+}
+
+// ---------- keyboard ----------
+
+function useShortcuts(data: Data | null, route: Route, setHelp: (f: (h: boolean) => boolean) => void) {
+  const ref = useRef({ data, route });
+  ref.current = { data, route };
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement;
+      if (e.metaKey || e.ctrlKey || e.altKey || t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable) return;
+      const { data, route } = ref.current;
+      if (e.key === "Escape") return setHelp(() => false);
+      if (e.key === "?") return setHelp((h) => !h);
+      if (!data) return;
+      const cardEl = t.closest<HTMLElement>("[data-vid]");
+      const focused = cardEl ? data.byId.get(cardEl.dataset.vid!) : undefined;
+      const onPage = route.page === "watch" ? data.byId.get(route.id) : undefined;
+      const v = focused ?? onPage;
+      switch (e.key) {
+        case "j":
+        case "k": {
+          const links = [...document.querySelectorAll<HTMLAnchorElement>("[data-vid] .card-title a")];
+          if (!links.length) return;
+          const i = cardEl ? links.findIndex((a) => cardEl.contains(a)) : -1;
+          const next = links[Math.max(0, Math.min(links.length - 1, i + (e.key === "j" ? 1 : -1)))];
+          next.focus();
+          next.scrollIntoView({ block: "nearest", behavior: "smooth" });
+          e.preventDefault();
+          return;
+        }
+        case "w":
+          if (v) toggleLaterWithNote(v);
+          return;
+        case "x":
+          if (focused) hideWithUndo(focused);
+          return;
+        case "l":
+          if (v) {
+            const was = snapshot().liked.includes(v.id);
+            actions.toggleLike(v.id);
+            toast(was ? "Like removed" : "Liked. Similar videos move up For you.");
+          }
+          return;
+        case "s":
+          if (route.page === "home") actions.shuffle();
+          return;
+        case "r":
+          surpriseMe(data);
+          return;
+      }
+    };
+    window.addEventListener("keydown", on);
+    return () => window.removeEventListener("keydown", on);
+  }, [setHelp]);
+}
+
+function Help({ onClose }: { onClose: () => void }) {
+  const rows: [string, string][] = [
+    ["/", "Search"],
+    ["j  k", "Next and previous video"],
+    ["Enter", "Open the focused video"],
+    ["w", "Save to or remove from Watch later"],
+    ["l", "Like the focused or playing video"],
+    ["x", "Not for me (with undo)"],
+    ["s", "Shuffle For you"],
+    ["r", "Surprise me"],
+    ["?", "Show or hide this list"],
+  ];
+  return (
+    <div className="dialog-wrap" onClick={onClose}>
+      <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="keys-title" onClick={(e) => e.stopPropagation()}>
+        <div className="dialog-head">
+          <h2 id="keys-title">Keyboard shortcuts</h2>
+          <button className="icon-btn" onClick={onClose} aria-label="Close">
+            <Icon name="x" />
+          </button>
+        </div>
+        <dl className="keys">
+          {rows.map(([k, d]) => (
+            <div key={k}>
+              <dt>{k.split("  ").map((x) => <kbd key={x}>{x}</kbd>)}</dt>
+              <dd>{d}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+    </div>
+  );
+}
+
+function ToastView() {
+  const t = useToast();
+  if (!t) return <div className="toast-slot" aria-live="polite" />;
+  return (
+    <div className="toast-slot" aria-live="polite">
+      <div className="toast" key={t.id}>
+        <span>{t.text}</span>
+        {t.action && (
+          <button
+            className="text-btn"
+            onClick={() => {
+              t.action!.run();
+              dismiss();
+            }}
+          >
+            {t.action.label}
+          </button>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // ---------- chrome ----------
@@ -229,7 +473,8 @@ function SearchBox({ route }: { route: Route }) {
   }, []);
   useEffect(() => {
     if (route.page !== "search") setQ("");
-  }, [route.page]);
+    else setQ(route.q);
+  }, [route]);
   return (
     <form
       className="search"
@@ -244,7 +489,7 @@ function SearchBox({ route }: { route: Route }) {
         ref={input}
         value={q}
         onChange={(e) => setQ(e.target.value)}
-        placeholder="Search talks, lectures, channels, topics"
+        placeholder="Search by meaning: “how CPUs really work”"
         aria-label="Search"
       />
       <kbd aria-hidden="true">/</kbd>
@@ -263,7 +508,7 @@ function currentArea(data: Data, route: Route) {
   return undefined;
 }
 
-function Nav({ data, route }: { data: Data | null; route: Route }) {
+function Nav({ data, route, onHelp }: { data: Data | null; route: Route; onHelp: () => void }) {
   const s = useStore();
   const cur = (p: string) => (route.page === p ? "page" : undefined);
   const openArea = data ? currentArea(data, route) : undefined;
@@ -273,7 +518,7 @@ function Nav({ data, route }: { data: Data | null; route: Route }) {
         <li><a href="#/" aria-current={cur("home")}><Icon name="home" />For you</a></li>
         <li>
           <a href="#/later" aria-current={cur("later")}>
-            <Icon name="clock" />Watch later{s.later.length > 0 && <span className="count num">{s.later.length}</span>}
+            <Icon name="clock" />Watch later{s.later.length > 0 && <span className="count">{s.later.length}</span>}
           </a>
         </li>
         <li><a href="#/liked" aria-current={cur("liked")}><Icon name="heart" />Liked</a></li>
@@ -310,6 +555,11 @@ function Nav({ data, route }: { data: Data | null; route: Route }) {
       <ul className="nav-foot">
         <li><a href="#/tune" aria-current={cur("tune")}><Icon name="sliders" />Tune your feed</a></li>
         <li><a href="#/about" aria-current={cur("about")}><Icon name="info" />How it works</a></li>
+        <li>
+          <button className="nav-btn" onClick={onHelp}>
+            <Icon name="keys" />Keyboard shortcuts<kbd className="count">?</kbd>
+          </button>
+        </li>
       </ul>
     </nav>
   );
@@ -318,8 +568,7 @@ function Nav({ data, route }: { data: Data | null; route: Route }) {
 function Skeleton() {
   return (
     <div className="skeleton" aria-label="Loading videos">
-      <div className="bar" style={{ width: 120, height: 24 }} />
-      <div className="bar" style={{ width: 360, height: 14, marginTop: 10 }} />
+      <div className="bar hero-bar" />
       <div className="feed" style={{ marginTop: 28 }}>
         {Array.from({ length: 8 }, (_, i) => (
           <div key={i}>
@@ -349,13 +598,13 @@ function CardActions({ v }: { v: Video }) {
       <button
         className="chip-btn"
         aria-pressed={later}
-        onClick={() => actions.toggleLater(v.id)}
+        onClick={() => toggleLaterWithNote(v)}
         aria-label={later ? `Remove ${v.t} from Watch later` : `Save ${v.t} to Watch later`}
-        title={later ? "Saved to Watch later" : "Watch later"}
+        title={later ? "Saved to Watch later (w)" : "Watch later (w)"}
       >
         <Icon name="clock" />
       </button>
-      <button className="chip-btn" onClick={() => actions.hide(v.id)} aria-label={`Not for me: hide ${v.t}`} title="Not for me">
+      <button className="chip-btn" onClick={() => hideWithUndo(v)} aria-label={`Not for me: hide ${v.t}`} title="Not for me (x)">
         <Icon name="x" />
       </button>
     </div>
@@ -364,7 +613,7 @@ function CardActions({ v }: { v: Video }) {
 
 function Card({ data, v }: { data: Data; v: Video }) {
   return (
-    <article className="card">
+    <article className="card" data-vid={v.id}>
       <div className="card-media">
         <a href={`#/watch/${v.id}`} tabIndex={-1} aria-hidden="true">
           <img src={thumb(v.id)} alt="" loading="lazy" />
@@ -388,16 +637,17 @@ function Lead({ data, v }: { data: Data; v: Video }) {
   const s = useStore();
   const later = s.later.includes(v.id);
   return (
-    <section className="lead" aria-label="Top pick">
+    <section className="lead" aria-label="Top pick" data-vid={v.id}>
       <div className="lead-media card">
         <a href={`#/watch/${v.id}`} aria-label={`Watch ${v.t}`}>
           <img src={thumb(v.id)} alt="" />
         </a>
+        <span className="lead-kicker" aria-hidden="true">Top pick</span>
         <span className="kind">{v.type}</span>
         <CardActions v={v} />
       </div>
       <div className="lead-body">
-        <h2 className="lead-title"><a href={`#/watch/${v.id}`}>{v.t}</a></h2>
+        <h2 className="lead-title card-title"><a href={`#/watch/${v.id}`}>{v.t}</a></h2>
         <p className="card-meta lead-meta">
           <span>{v.ch}</span>
           <TopicLink data={data} id={v.cats[0]} />
@@ -411,14 +661,14 @@ function Lead({ data, v }: { data: Data; v: Video }) {
         )}
         <div className="lead-hn">
           <p className="hn-line">
-            Recommended by <strong className="num">{v.recs}</strong> {v.recs === 1 ? "person" : "people"} in{" "}
-            <strong className="num">{v.rm}</strong> different {v.rm === 1 ? "month" : "months"}
+            Recommended by <strong>{v.recs}</strong> {v.recs === 1 ? "person" : "people"} in{" "}
+            <strong>{v.rm}</strong> different {v.rm === 1 ? "month" : "months"}
           </p>
           <YearStrip data={data} v={v} big />
         </div>
         <div className="lead-actions">
           <a className="btn primary" href={`#/watch/${v.id}`}>Watch</a>
-          <button className="btn" aria-pressed={later} onClick={() => actions.toggleLater(v.id)}>
+          <button className="btn" aria-pressed={later} onClick={() => toggleLaterWithNote(v)}>
             <Icon name="clock" />{later ? "Saved" : "Watch later"}
           </button>
         </div>
@@ -427,23 +677,40 @@ function Lead({ data, v }: { data: Data; v: Video }) {
   );
 }
 
-function Feed({ data, items, lead = false, empty }: { data: Data; items: Ranked[]; lead?: boolean; empty?: React.ReactNode }) {
+function Grid({ data, items }: { data: Data; items: Ranked[] }) {
+  return (
+    <div className="feed">
+      {items.map((r) => (
+        <Card key={r.v.id} data={data} v={r.v} />
+      ))}
+    </div>
+  );
+}
+
+function Feed({ data, items, empty }: { data: Data; items: Ranked[]; empty?: React.ReactNode }) {
   if (!items.length)
     return (
       <div className="frame-msg">
         <p>{empty}</p>
       </div>
     );
-  const rest = lead ? items.slice(1) : items;
+  return <Grid data={data} items={items} />;
+}
+
+function Shelf({ data, title, sub, items }: { data: Data; title: string; sub: string; items: Ranked[] }) {
+  if (items.length < 4) return null;
   return (
-    <>
-      {lead && <Lead data={data} v={items[0].v} />}
-      <div className="feed">
-        {rest.map((r) => (
+    <section className="shelf" aria-label={title}>
+      <div className="shelf-head">
+        <h2 className="section-title">{title}</h2>
+        <p className="sub">{sub}</p>
+      </div>
+      <div className="shelf-row">
+        {items.map((r) => (
           <Card key={r.v.id} data={data} v={r.v} />
         ))}
       </div>
-    </>
+    </section>
   );
 }
 
@@ -475,7 +742,7 @@ function TypeTabs({
           <button key={t.label} role="tab" aria-selected={value === t.id} onClick={() => onChange(t.id)}>
             <span className="long">{t.label}</span>
             <span className="short">{t.short}</span>
-            {n !== undefined && <span className="tab-n num">{fmt(n)}</span>}
+            {n !== undefined && <span className="tab-n">{fmt(n)}</span>}
           </button>
         );
       })}
@@ -491,24 +758,59 @@ function Home({ data }: { data: Data }) {
   const items = useMemo(() => forYou(data, s, n, s.type), [data, s, n]);
   const areas = new Set(items.map((r) => data.meta.cats[r.v.cats[0]]?.area)).size;
   const topics = new Set(items.map((r) => r.v.cats[0])).size;
+  const [y0, y1] = data.meta.years;
+  const inFeed = useMemo(() => new Set(items.map((r) => r.v.id)), [items]);
+  const match = typeMatch(s.type);
+  const decade = useMemo(
+    () => shelf(data, s, (v) => match(v) && v.years[0] <= y1 - 10 && (litIn(data, v, y1) || litIn(data, v, y1 - 1)), 10, inFeed),
+    [data, s, inFeed], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const fresh = useMemo(
+    () => shelf(data, s, (v) => match(v) && v.years[0] >= y1 - 2, 10, new Set([...inFeed, ...decade.map((r) => r.v.id)])),
+    [data, s, inFeed, decade], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const lead = items[0];
+  const a = items.slice(1, 13);
+  const b = items.slice(13, 25);
+  const rest = items.slice(25);
   return (
     <>
-      <div className="title-row">
-        <div>
+      <section className="hero">
+        <Sunset />
+        <div className="hero-copy">
           <h1>For you</h1>
-          <p className="sub">
-            {items.length} picks across {topics} topics in {areas} of 16 areas
-            {s.liked.length > 0 ? `, steered by ${s.liked.length} ${s.liked.length === 1 ? "like" : "likes"}` : ""}.
-            {s.shuffle > 0 ? " Shuffled." : " Today's mix."}
+          <p className="hero-sub">
+            {items.length} picks across {topics} topics in {areas} of 16 areas, from {fmt(data.videos.length)} videos Hacker
+            News kept recommending, {y0} to {y1}.
+            {s.liked.length > 0 ? ` Steered by ${s.liked.length} ${s.liked.length === 1 ? "like" : "likes"}.` : ""}
           </p>
+          <div className="hero-actions">
+            <button className="btn primary" onClick={actions.shuffle} title="Shuffle (s)">
+              <Icon name="shuffle" />Shuffle
+            </button>
+            <button className="btn on-sky" onClick={() => surpriseMe(data)} title="Surprise me (r)">
+              <Icon name="spark" />Surprise me
+            </button>
+            <span className="mix">{s.shuffle > 0 ? "Shuffled mix" : "Today's mix"}</span>
+          </div>
         </div>
-        <button className="btn primary" onClick={actions.shuffle}>
-          <Icon name="shuffle" />Shuffle
-        </button>
-      </div>
+      </section>
       <TypeTabs value={s.type} onChange={actions.setType} />
-      <Feed data={data} items={items} lead empty="No videos of this kind left. Choose All, or undo a few Not for me picks on the Tune page." />
-      {items.length >= n && <button className="btn more" onClick={more}>Show more</button>}
+      {!lead ? (
+        <div className="frame-msg">
+          <p>No videos of this kind left. Choose All, or undo a few Not for me picks on the Tune page.</p>
+        </div>
+      ) : (
+        <>
+          <Lead data={data} v={lead.v} />
+          <Grid data={data} items={a} />
+          <Shelf data={data} title="Still recommended a decade on" sub={`First recommended by ${y1 - 10} and still recommended in ${y1 - 1} or ${y1}`} items={decade} />
+          {b.length > 0 && <Grid data={data} items={b} />}
+          <Shelf data={data} title="New on Hacker News" sub={`First recommended in ${y1 - 2} or later`} items={fresh} />
+          {rest.length > 0 && <Grid data={data} items={rest} />}
+          {items.length >= n && <button className="btn more" onClick={more}>Show more</button>}
+        </>
+      )}
     </>
   );
 }
@@ -568,7 +870,7 @@ function Listing({
         <div>
           {crumb}
           <h1>{title}</h1>
-          <p className="sub"><span className="num">{fmt(counts.all)}</span> videos HN recommended</p>
+          <p className="sub">{fmt(counts.all)} videos HN recommended</p>
         </div>
         <SortSwitch value={sort} onChange={setSort} />
       </div>
@@ -577,7 +879,7 @@ function Listing({
       <Feed data={data} items={items} empty="Nothing here yet." />
       {items.length < total && (
         <button className="btn more" onClick={more}>
-          Show more <span className="muted num">{fmt(items.length)} of {fmt(total)}</span>
+          Show more <span className="faint">{fmt(items.length)} of {fmt(total)}</span>
         </button>
       )}
     </>
@@ -620,7 +922,7 @@ function Area({ data, id }: { data: Data; id: string }) {
           {area.cats.map((c) => (
             <li key={c}>
               <a href={`#/topic/${c}`}>
-                {data.meta.cats[c].name} <span className="num">{data.meta.cats[c].n}</span>
+                {data.meta.cats[c].name} <span className="faint">{data.meta.cats[c].n}</span>
               </a>
             </li>
           ))}
@@ -639,20 +941,42 @@ function NotFound({ what }: { what: string }) {
   );
 }
 
+type SemState = { status: "loading" | "ready" | "failed"; scores?: Float32Array };
+
 function Search({ data, q }: { data: Data; q: string }) {
-  const items = useMemo(() => search(data, q, 60), [data, q]);
+  const [sem, setSem] = useState<SemState>({ status: "loading" });
+  useEffect(() => {
+    let live = true;
+    setSem({ status: "loading" });
+    semanticScores(q, data.meta.emb.model, data.meta.emb.dim).then(
+      (scores) => live && setSem({ status: "ready", scores }),
+      () => live && setSem({ status: "failed" }),
+    );
+    return () => {
+      live = false;
+    };
+  }, [q, data]);
+  const items = useMemo(
+    () => (sem.scores ? semanticSearch(data, q, sem.scores, 60) : search(data, q, 60)),
+    [data, q, sem.scores],
+  );
+  const note =
+    sem.status === "loading"
+      ? "Matching words for now. Loading search by meaning (about 30 MB, first search only)…"
+      : sem.status === "failed"
+        ? "Search by meaning couldn't load, so these match words only."
+        : "Ranked by meaning, with a boost for matching words.";
   return (
     <>
       <div className="title-row">
         <div>
           <h1>Results for “{q}”</h1>
           <p className="sub">
-            {items.length === 60 ? "Top 60 matches" : `${items.length} ${items.length === 1 ? "match" : "matches"}`} in titles,
-            channels, topics and summaries
+            {items.length === 60 ? "Top 60" : `${items.length} ${items.length === 1 ? "video" : "videos"}`}. {note}
           </p>
         </div>
       </div>
-      <Feed data={data} items={items} empty={<>Nothing matches “{q}”. Try a broader word, or browse a topic from the menu.</>} />
+      <Feed data={data} items={items} empty={<>Nothing close to “{q}” yet. Try describing what you want to learn, in a few words.</>} />
     </>
   );
 }
@@ -667,7 +991,7 @@ function Library({ data, which }: { data: Data; which: "liked" | "later" | "hist
   const title = { liked: "Liked", later: "Watch later", history: "History" }[which];
   const empty = {
     liked: "Nothing liked yet. Liking a video moves similar ones up For you.",
-    later: "Nothing saved yet. The clock on any video saves it here.",
+    later: "Nothing saved yet. The clock on any video saves it here, and the player plays this list next.",
     history: "No history yet. Videos you open show up here, newest first.",
   }[which];
   return (
@@ -675,8 +999,13 @@ function Library({ data, which }: { data: Data; which: "liked" | "later" | "hist
       <div className="title-row">
         <div>
           <h1>{title}</h1>
-          <p className="sub"><span className="num">{items.length}</span> {items.length === 1 ? "video" : "videos"}</p>
+          <p className="sub">{items.length} {items.length === 1 ? "video" : "videos"}{which === "later" && items.length > 0 ? ", played in this order" : ""}</p>
         </div>
+        {which === "later" && items.length > 0 && (
+          <a className="btn primary" href={`#/watch/${items[0].v.id}?auto=1`}>
+            <Icon name="next" />Play all
+          </a>
+        )}
         {which === "history" && items.length > 0 && (
           <button className="btn" onClick={actions.clearHistory}>Clear history</button>
         )}
@@ -690,6 +1019,25 @@ function Tune({ data }: { data: Data }) {
   const s = useStore();
   const w = weightsFor(data, s);
   const changed = Object.keys(s.weights).length > 0;
+  const file = useRef<HTMLInputElement>(null);
+  const exportLib = () => {
+    const blob = new Blob([JSON.stringify({ ...snapshot(), exported: new Date().toISOString() }, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "polymath-tube-library.json";
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast("Library downloaded");
+  };
+  const importLib = async (f: File) => {
+    try {
+      actions.importState(JSON.parse(await f.text()));
+      const now = snapshot();
+      toast(`Library imported: ${now.liked.length} liked, ${now.later.length} saved, ${now.hidden.length} hidden`);
+    } catch {
+      toast("That file isn't a Polymath Tube library. Choose the .json file you downloaded here.");
+    }
+  };
   return (
     <>
       <div className="title-row">
@@ -700,7 +1048,7 @@ function Tune({ data }: { data: Data }) {
         {changed && <button className="btn" onClick={actions.resetWeights}>Reset</button>}
       </div>
       <section className="panel">
-        <h2 className="panel-title">Interests</h2>
+        <h2 className="section-title">Interests</h2>
         <ul className="tune">
           {data.meta.facets.map((f, j) => (
             <li key={f.id}>
@@ -714,15 +1062,47 @@ function Tune({ data }: { data: Data }) {
                 value={w[j]}
                 onChange={(e) => actions.setWeight(f.id, Number(e.target.value))}
               />
-              <output htmlFor={`w-${f.id}`} className="num">{w[j].toFixed(1)}</output>
+              <output htmlFor={`w-${f.id}`}>{w[j].toFixed(1)}</output>
             </li>
           ))}
         </ul>
       </section>
       <section className="panel">
-        <h2 className="panel-title">Not for me</h2>
+        <h2 className="section-title">Playback</h2>
+        <label className="switch-row">
+          <span>
+            <strong>Autoplay next</strong>
+            <span className="faint">When a video ends, play the next one from Watch later, or the most similar video.</span>
+          </span>
+          <input type="checkbox" role="switch" checked={s.autoplay} onChange={actions.toggleAutoplay} />
+        </label>
+      </section>
+      <section className="panel">
+        <h2 className="section-title">Your library</h2>
+        <p className="faint">
+          Likes, Watch later, history and these settings live only in this browser. Download them to keep a copy or to
+          move them to another device.
+        </p>
+        <div className="lib-actions">
+          <button className="btn" onClick={exportLib}><Icon name="down" />Download library</button>
+          <button className="btn" onClick={() => file.current?.click()}><Icon name="up" />Import library</button>
+          <input
+            ref={file}
+            type="file"
+            accept="application/json,.json"
+            hidden
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) importLib(f);
+              e.target.value = "";
+            }}
+          />
+        </div>
+      </section>
+      <section className="panel">
+        <h2 className="section-title">Not for me</h2>
         {s.hidden.length === 0 ? (
-          <p className="muted">Nothing hidden. The cross on a video hides it and pushes similar ones down.</p>
+          <p className="faint">Nothing hidden. The cross on a video hides it and pushes similar ones down.</p>
         ) : (
           <ul className="rows">
             {s.hidden.map((id) => {
@@ -741,9 +1121,40 @@ function Tune({ data }: { data: Data }) {
   );
 }
 
-function Watch({ data, id }: { data: Data; id: string }) {
+/** Listens to the YouTube embed and calls onEnd when the video finishes. */
+function usePlayerEnd(frame: React.RefObject<HTMLIFrameElement | null>, id: string, onEnd: () => void) {
+  const cb = useRef(onEnd);
+  cb.current = onEnd;
+  useEffect(() => {
+    const el = frame.current;
+    if (!el) return;
+    const hello = () => {
+      el.contentWindow?.postMessage(JSON.stringify({ event: "listening", id: 1, channel: "widget" }), "*");
+      el.contentWindow?.postMessage(JSON.stringify({ event: "command", func: "addEventListener", args: ["onStateChange"], id: 1, channel: "widget" }), "*");
+    };
+    el.addEventListener("load", hello);
+    const on = (e: MessageEvent) => {
+      if (e.source !== el.contentWindow || typeof e.data !== "string") return;
+      try {
+        const m = JSON.parse(e.data);
+        const ended = (m.event === "onStateChange" && m.info === 0) || (m.event === "infoDelivery" && m.info?.playerState === 0);
+        if (ended) cb.current();
+      } catch {
+        /* not a player message */
+      }
+    };
+    window.addEventListener("message", on);
+    return () => {
+      el.removeEventListener("load", hello);
+      window.removeEventListener("message", on);
+    };
+  }, [frame, id]);
+}
+
+function Watch({ data, id, auto }: { data: Data; id: string; auto: boolean }) {
   const s = useStore();
   const v = data.byId.get(id);
+  const frame = useRef<HTMLIFrameElement>(null);
   const [mentions, setMentions] = useState<Mention[] | null>(null);
   const [failed, setFailed] = useState(false);
   const getMentions = () => {
@@ -759,19 +1170,42 @@ function Watch({ data, id }: { data: Data; id: string }) {
     getMentions();
   }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const hiddenSet = new Set(s.hidden);
+  const queue = v
+    ? [
+        ...s.later.filter((x) => x !== id).map((x) => data.byId.get(x)),
+        ...v.sim.map(([sid]) => data.byId.get(sid)),
+      ].filter((x, i, arr): x is Video => !!x && !hiddenSet.has(x.id) && x.id !== id && arr.findIndex((y) => y?.id === x.id) === i)
+    : [];
+  const next = queue[0];
+  usePlayerEnd(frame, id, () => {
+    if (snapshot().autoplay && next) go(`#/watch/${next.id}?auto=1`);
+  });
+
   if (!v) return <NotFound what="video" />;
   const liked = s.liked.includes(v.id);
   const later = s.later.includes(v.id);
   const hidden = s.hidden.includes(v.id);
-  const similar = v.sim.map(([sid]) => data.byId.get(sid)).filter((x): x is Video => !!x && !s.hidden.includes(x.id));
-  const also = v.rel.map((rid) => data.byId.get(rid)).filter((x): x is Video => !!x);
+  const also = v.rel.map((rid) => data.byId.get(rid)).filter((x): x is Video => !!x && !hiddenSet.has(x.id));
+  const fromLater = s.later.filter((x) => x !== id).length;
+  const share = async () => {
+    const url = `${location.origin}/#/watch/${v.id}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      toast("Link copied");
+    } catch {
+      toast("Couldn't copy. The link is in the address bar.");
+    }
+  };
 
   return (
     <div className="watch">
       <div className="watch-main">
         <div className="player">
           <iframe
-            src={`https://www.youtube-nocookie.com/embed/${v.id}?rel=0`}
+            ref={frame}
+            key={v.id}
+            src={`https://www.youtube-nocookie.com/embed/${v.id}?rel=0&enablejsapi=1&autoplay=${auto ? 1 : 0}&origin=${encodeURIComponent(location.origin)}`}
             title={v.t}
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
             allowFullScreen
@@ -779,17 +1213,18 @@ function Watch({ data, id }: { data: Data; id: string }) {
         </div>
         <div className="title-row watch-head">
           <div>
-            <h1>{v.t}</h1>
+            <h1 className="watch-title">{v.t}</h1>
             <p className="sub">{v.ch} <span className="kind-inline">{v.type}</span></p>
           </div>
           <div className="actions">
-            <button className="btn" aria-pressed={liked} onClick={() => actions.toggleLike(v.id)}>
+            <button className="btn" aria-pressed={liked} onClick={() => actions.toggleLike(v.id)} title="Like (l)">
               <Icon name="heart" />{liked ? "Liked" : "Like"}
             </button>
-            <button className="btn" aria-pressed={later} onClick={() => actions.toggleLater(v.id)}>
+            <button className="btn" aria-pressed={later} onClick={() => toggleLaterWithNote(v)} title="Watch later (w)">
               <Icon name="clock" />{later ? "Saved" : "Watch later"}
             </button>
-            <button className="btn quiet" aria-pressed={hidden} onClick={() => (hidden ? actions.unhide(v.id) : actions.hide(v.id))}>
+            <button className="btn" onClick={share}><Icon name="link" />Copy link</button>
+            <button className="btn quiet" aria-pressed={hidden} onClick={() => (hidden ? actions.unhide(v.id) : hideWithUndo(v))}>
               {hidden ? "Hidden from feed" : "Not for me"}
             </button>
           </div>
@@ -803,14 +1238,14 @@ function Watch({ data, id }: { data: Data; id: string }) {
             ))}
           </ul>
           <p className="summary">{v.sum}</p>
-          <p className="muted">{v.why}</p>
+          <p className="faint">{v.why}</p>
         </section>
 
         <section className="panel hn">
-          <h2 className="panel-title">On Hacker News</h2>
+          <h2 className="section-title">On Hacker News</h2>
           <p className="hn-line">
-            Recommended by <strong className="num">{v.recs}</strong> {v.recs === 1 ? "person" : "people"} in{" "}
-            <strong className="num">{v.rm}</strong> different {v.rm === 1 ? "month" : "months"},{" "}
+            Recommended by <strong>{v.recs}</strong> {v.recs === 1 ? "person" : "people"} in{" "}
+            <strong>{v.rm}</strong> different {v.rm === 1 ? "month" : "months"},{" "}
             {v.years[0] === v.years[1] ? `in ${v.years[0]}` : `${v.years[0]} to ${v.years[1]}`}
           </p>
           <YearStrip data={data} v={v} big />
@@ -821,8 +1256,8 @@ function Watch({ data, id }: { data: Data; id: string }) {
                 <button className="text-btn" onClick={getMentions}>Retry</button>
               </div>
             )}
-            {!failed && mentions === null && <p className="muted">Loading comments…</p>}
-            {mentions && mentions.length === 0 && <p className="muted">No recommending comments were kept for this one.</p>}
+            {!failed && mentions === null && <p className="faint">Loading comments…</p>}
+            {mentions && mentions.length === 0 && <p className="faint">No recommending comments were kept for this one.</p>}
             {mentions?.map((m) => (
               <blockquote key={m.id}>
                 <p>{m.x.replaceAll("[VIDEO]", "(this video)").replaceAll("[LINK]", "(link)")}</p>
@@ -837,11 +1272,18 @@ function Watch({ data, id }: { data: Data; id: string }) {
       </div>
 
       <aside className="watch-side" aria-label="More videos">
-        <h2 className="side-title">Similar</h2>
-        <SideList data={data} items={similar.slice(0, 8)} />
+        <div className="side-title-row">
+          <h2 className="section-title">Up next</h2>
+          <label className="mini-switch">
+            <input type="checkbox" role="switch" checked={s.autoplay} onChange={actions.toggleAutoplay} />
+            Autoplay
+          </label>
+        </div>
+        <p className="faint side-note">{fromLater > 0 ? `${fromLater} from Watch later, then similar videos` : "Similar videos"}</p>
+        <SideList data={data} items={queue.slice(0, 8)} first />
         {also.length > 0 && (
           <>
-            <h2 className="side-title">The same HN people also recommend</h2>
+            <h2 className="section-title side-gap">The same HN people also recommend</h2>
             <SideList data={data} items={also.slice(0, 6)} />
           </>
         )}
@@ -850,11 +1292,11 @@ function Watch({ data, id }: { data: Data; id: string }) {
   );
 }
 
-function SideList({ data, items }: { data: Data; items: Video[] }) {
+function SideList({ data, items, first = false }: { data: Data; items: Video[]; first?: boolean }) {
   return (
     <ul className="side-list">
-      {items.map((v) => (
-        <li key={v.id}>
+      {items.map((v, i) => (
+        <li key={v.id} data-vid={v.id} className={first && i === 0 ? "next" : undefined}>
           <a href={`#/watch/${v.id}`}>
             <img src={thumb(v.id)} alt="" loading="lazy" />
             <span>
@@ -898,13 +1340,19 @@ function About({ data }: { data: Data }) {
           area earns some.
         </p>
         <p>
-          Liking a video brings its neighbours forward, and so do the videos its HN recommenders also recommended. “Not
-          for me” pushes its neighbours back. Shuffle deals a new mix. You can turn interests up or down on{" "}
-          <a href="#/tune">Tune your feed</a>.
+          Search runs that same model in your browser: your words become a vector and are compared with every video's,
+          so “how CPUs really work” finds talks that never use those words. Matching words add a small boost. The model
+          downloads once, on your first search.
         </p>
         <p>
-          The orange strip on each video marks the years, from 2007 to 2026, in which HN commenters recommended it. A
-          brighter cell is a year with more recommending comments among the up to 20 the export keeps per video.
+          Liking a video brings its neighbours forward, and so do the videos its HN recommenders also recommended. “Not
+          for me” pushes its neighbours back. Shuffle deals a new mix, and Surprise me opens one lasting pick at random.
+          You can turn interests up or down on <a href="#/tune">Tune your feed</a>.
+        </p>
+        <p>
+          The strip on each video marks the years, from 2007 to 2026, in which HN commenters recommended it: violet for
+          a year with one or two recommending comments, pink for three or four, gold for five or more, among the up to
+          20 the export keeps per video.
         </p>
         <p>
           Likes, Watch later, history and interest weights stay in this browser. Nothing is sent anywhere. Videos play

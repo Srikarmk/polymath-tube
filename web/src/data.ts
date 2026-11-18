@@ -29,6 +29,7 @@ export type Meta = {
   areas: { id: string; name: string; cats: string[] }[];
   generated: string;
   years: [number, number];
+  emb: { dim: number; rows: number; model: string };
 };
 
 export type Mention = { u: string; m: string; s: string; x: string; id: number; st: string };

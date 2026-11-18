@@ -29,6 +29,11 @@ interviews) narrows it.
 Each video carries a strip of 20 cells, 2007 to 2026, lit in the years HN commenters recommended it
 (brighter for more recommending comments among the up to 20 the export keeps per video).
 
+Search runs the same bge-small model in the browser (transformers.js, quantized): the query becomes a
+vector and is compared with every video's (`web/public/data/emb.bin`, int8, one row per video). On three
+test queries the browser's vectors matched fastembed's at a cosine of 0.997 or more. Matching words, minus
+filler like "how" and "really", add a small boost.
+
 In the browser, a like raises the video's nearest neighbours by embedding and the videos its HN
 recommenders also recommended. "Not for me" pushes its neighbours down, and videos already opened drop
 back. Interest weights can be changed on the Tune page. All of this stays in `localStorage`.
