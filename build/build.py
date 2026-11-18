@@ -120,7 +120,7 @@ def main():
     json.dump(out, open(OUT / "videos.json", "w"), separators=(",", ":"), ensure_ascii=False)
     json.dump(trimmed, open(OUT / "mentions.json", "w"), separators=(",", ":"), ensure_ascii=False)
     json.dump({
-        "facets": [{k: f[k] for k in ("id", "label", "short", "weight")} for f in facets],
+        "facets": [{k: f[k] for k in ("id", "short", "weight")} for f in facets],
         "cats": cats,
         "areas": areas,
         "generated": "2026-10-31",

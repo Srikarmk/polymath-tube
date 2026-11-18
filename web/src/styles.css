@@ -95,7 +95,7 @@ img { display: block; }
 .rail-name { display: block; font-size: 14px; line-height: 1.3; }
 .rail-bar { display: block; height: 2px; margin-top: 5px; border-radius: 1px; background: var(--line); position: relative; }
 .rail-bar::after { content: ""; position: absolute; inset: 0 auto 0 0; width: var(--w); background: var(--accent); opacity: 0.7; border-radius: 1px; }
-.rail-tune { margin-top: 14px; font-size: 13px; }
+.rail-tune { margin-top: 2px; font-size: 13px; }
 
 .main { min-width: 0; padding: 32px 0 64px; }
 
@@ -257,3 +257,4 @@ img { display: block; }
   .cats { display: none; }
   .areas { display: contents; }
 }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

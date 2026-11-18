@@ -78,7 +78,7 @@ export default function App() {
         <a href="https://hackertube.org" target="_blank" rel="noreferrer">HackerTube</a>'s open data (ODC-By 1.0),
         built from the{" "}
         <a href="https://huggingface.co/datasets/open-index/hacker-news" target="_blank" rel="noreferrer">Hacker News archive</a>.
-        Ranked for me against my own projects. <a href="#/about">How it works</a>
+        <a href="#/about">How it works</a>
       </footer>
     </div>
   );
@@ -180,6 +180,9 @@ function Rail({ data, route }: { data: Data; route: Route }) {
       <a className="rail-home" href="#/" aria-current={route.page === "home" ? "page" : undefined}>
         For you
       </a>
+      <a className="rail-tune" href="#/threads" aria-current={route.page === "threads" ? "page" : undefined}>
+        Tune your feed
+      </a>
       <p className="rail-head">Topics</p>
       <ul className="areas">
         {data.meta.areas.map((a) => {
@@ -259,13 +262,7 @@ function Home({ data }: { data: Data }) {
   const items = useMemo(() => forYou(data, s, n), [data, s, n]);
   return (
     <>
-      <section className="intro">
-        <h1>Talks Hacker News keeps recommending, ranked against what I build.</h1>
-        <p>
-          My own work leads, and the rest of the feed ranges across everything HN watches. Liking a video brings
-          its neighbours forward; “Not for me” pushes them back. <a href="#/threads">Tune what it favours</a>
-        </p>
-      </section>
+      <h1 className="sr-only">For you</h1>
       <Grid data={data} items={items} />
       <button className="more" onClick={more}>Show more</button>
     </>
@@ -365,8 +362,8 @@ function Threads({ data }: { data: Data }) {
     <>
       <section className="intro row">
         <div>
-          <h1>Tune the threads</h1>
-          <p>Each thread is one strand of my projects. Turn one up and its videos rise in For you; set it to zero to drop it. Topics outside these threads still fill the rest of the feed.</p>
+          <h1>Tune your feed</h1>
+          <p>Turn an interest up and its videos rise in For you; set it to zero to drop it. Other topics still fill the rest of the feed.</p>
         </div>
         <button className="ghost" onClick={actions.resetWeights}>Reset</button>
       </section>
@@ -375,7 +372,6 @@ function Threads({ data }: { data: Data }) {
           <li key={f.id}>
             <div>
               <span className="tune-name">{f.short}</span>
-              <p>{f.label}</p>
             </div>
             <input
               type="range"
@@ -530,19 +526,18 @@ function About({ data }: { data: Data }) {
       <p>
         <a href="https://hackertube.org" target="_blank" rel="noreferrer">HackerTube</a> read every Hacker News comment
         from 2007 to 2026 and kept the YouTube videos that at least three different people recommended, in at least
-        three different months. It published that list as open data. This site re-ranks it for one person.
+        three different months. It published that list as open data, and this site is built on it.
       </p>
       <p>
-        I wrote {data.meta.facets.length} short descriptions of what my projects are about: eval statistics from evalpair,
-        how LLMs break from prompt-brittleness and llm-judge-bias, real-time rendering from Duskline, transit and city
-        data from Yeas &amp; Nays and bostonmove, and so on. Each description is embedded with the same model HackerTube
-        used (bge-small), and every video is scored against every thread. A video's score is its strongest thread,
-        measured against how much it matches the profile in general, plus a share of how long HN has kept recommending
-        it. The feed then spreads out: a second video from the same topic or area costs points, and the first one from
-        a new area earns some, so For you ranges across HN's 16 areas instead of circling my own projects.
+        For you starts from {data.meta.facets.length} interests, each a short description embedded with the same model
+        HackerTube used (bge-small). Every video is scored against every interest, plus a share of how long HN has kept
+        recommending it. The feed then spreads out: a second video from the same topic or area costs points, and the
+        first one from a new area earns some, so For you ranges across all 16 areas. Liking a video brings its
+        neighbours forward and “Not for me” pushes them back. You can turn interests up or down on the{" "}
+        <a href="#/threads">Tune your feed</a> page.
       </p>
       <p>
-        Likes, Watch later, history and thread weights stay in this browser. Nothing is sent anywhere. Videos play
+        Likes, Watch later, history and interest weights stay in this browser. Nothing is sent anywhere. Videos play
         through YouTube's privacy-enhanced embed.
       </p>
       <p className="muted">Data exported {data.meta.generated}. {data.videos.length.toLocaleString()} videos after removing duplicate uploads.</p>

@@ -4,10 +4,10 @@ import type { State } from "./store";
 export type Ranked = { v: Video; score: number };
 
 const QUALITY = 0.6; // weight on log(1 + HackerTube score): how much HN's lasting love counts
-const PERSONAL = 0.7; // weight on the strongest thread of my work
+const PERSONAL = 0.7; // weight on the strongest interest
 const SAME_TOPIC = 0.6; // penalty per earlier pick in the same topic
 const SAME_AREA = 0.3; // penalty per earlier pick in the same area
-const NEW_AREA = 0.7; // bonus for the first pick from an area, so the feed spans HN, not just my threads
+const NEW_AREA = 0.7; // bonus for the first pick from an area, so the feed spans all of HN
 
 export const quality = (v: Video) => QUALITY * Math.log1p(v.score);
 
@@ -15,7 +15,7 @@ export function weightsFor(data: Data, s: State) {
   return data.meta.facets.map((f) => s.weights[f.id] ?? f.weight);
 }
 
-/** Which thread of my work pulls this video in hardest, and how hard. */
+/** Which interest pulls this video in hardest, and how hard. */
 export function affinity(v: Video, w: number[]) {
   let best = -Infinity;
   let arg = 0;
@@ -94,7 +94,7 @@ export function forYou(data: Data, s: State, count: number): Ranked[] {
   return out;
 }
 
-/** A topic or a whole area: HN's most lasting picks first, nudged a little toward my work. */
+/** A topic or a whole area: HN's most lasting picks first, nudged a little toward your interests. */
 export function byTopic(data: Data, s: State, match: (v: Video) => boolean, count: number): Ranked[] {
   const w = weightsFor(data, s);
   const hidden = new Set(s.hidden);

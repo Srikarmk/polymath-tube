@@ -19,7 +19,7 @@ export type Video = {
   rel: string[];
 };
 
-export type Facet = { id: string; label: string; short: string; weight: number };
+export type Facet = { id: string; short: string; weight: number };
 
 export type Meta = {
   facets: Facet[];
