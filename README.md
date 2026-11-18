@@ -1,5 +1,7 @@
 # Polymath Tube
 
+**Live:** https://polymath-tube.vercel.app
+
 HackerTube, re-ranked for one person. [HackerTube](https://hackertube.org) kept the YouTube videos that
 Hacker News commenters recommended again and again from 2007 to 2026, and published them as open data.
 This site takes that list and ranks it against my own projects.
