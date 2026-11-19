@@ -1,10 +1,11 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { hnUrl, loadData, loadMentions, thumb, type Data, type Mention, type Video } from "./data";
 import {
   byTopic,
   countWhere,
   forYou,
   litIn,
+  quality,
   search,
   semanticSearch,
   shelf,
@@ -16,7 +17,7 @@ import {
   type TopicSort,
 } from "./rank";
 import { semanticScores } from "./semantic";
-import { actions, snapshot, useStore } from "./store";
+import { actions, FINISH_MARGIN, isInProgress, snapshot, useStore, type Progress, type State } from "./store";
 import { dismiss, toast, useToast } from "./toast";
 
 // ---------- routing (hash, so the site is fully static) ----------
@@ -25,7 +26,11 @@ type Route =
   | { page: "home" }
   | { page: "topic"; id: string }
   | { page: "area"; id: string }
-  | { page: "watch"; id: string; auto: boolean }
+  | { page: "watch"; id: string; auto: boolean; list: string | null }
+  | { page: "playlists" }
+  | { page: "playlist"; id: string }
+  | { page: "year"; y: number }
+  | { page: "channel"; name: string }
   | { page: "search"; q: string }
   | { page: "liked" | "later" | "history" | "tune" | "about" };
 
@@ -35,7 +40,15 @@ function parse(hash: string): Route {
   const params = new URLSearchParams(qs ?? "");
   switch (parts[0]) {
     case "watch":
-      return { page: "watch", id: parts[1], auto: params.get("auto") === "1" };
+      return { page: "watch", id: parts[1], auto: params.get("auto") === "1", list: params.get("list") };
+    case "playlists":
+      return { page: "playlists" };
+    case "playlist":
+      return { page: "playlist", id: parts[1] };
+    case "year":
+      return { page: "year", y: Number(parts[1]) };
+    case "channel":
+      return { page: "channel", name: decodeURIComponent(parts.slice(1).join("/")) };
     case "topic":
       return { page: "topic", id: parts[1] };
     case "area":
@@ -91,6 +104,9 @@ const paths = {
   down: "M8 2.5v8M4.5 7.5 8 11l3.5-3.5M3 13.5h10",
   up: "M8 13.5v-8M4.5 8.5 8 5l3.5 3.5M3 2.5h10",
   next: "M4 3.5v9l6.5-4.5zM12 3.5v9",
+  list: "M2.5 4h8M2.5 8h8M2.5 12h5M12.5 9.5v5M10 12h5",
+  cal: "M2.5 4h11v9.5h-11zM2.5 7h11M5.5 2.5v3M10.5 2.5v3",
+  cmd: "M5.5 5.5h5v5h-5zM5.5 5.5a2 2 0 1 1 0-0.01M10.5 5.5a2 2 0 1 1 0-.01M5.5 10.5a2 2 0 1 0 0 .01M10.5 10.5a2 2 0 1 0 0 .01",
 };
 
 function Icon({ name, size = 16 }: { name: keyof typeof paths; size?: number }) {
@@ -202,7 +218,7 @@ function Sunset() {
 
 // ---------- the year strip: which years HN recommended a video ----------
 
-function YearStrip({ data, v, big = false }: { data: Data; v: Video; big?: boolean }) {
+function YearStrip({ data, v, big = false, link = false }: { data: Data; v: Video; big?: boolean; link?: boolean }) {
   const [y0, y1] = data.meta.years;
   const lit = [...v.ry].map(Number);
   const years = lit.map((n, i) => (n ? y0 + i : 0)).filter(Boolean);
@@ -210,11 +226,16 @@ function YearStrip({ data, v, big = false }: { data: Data; v: Video; big?: boole
     ? `Recommended on Hacker News in ${years.length} ${years.length === 1 ? "year" : "different years"}: ${years.join(", ")}`
     : "Not recommended in the comments kept";
   return (
-    <span className={big ? "strip big" : "strip"} role="img" aria-label={label} title={big ? undefined : label}>
+    <span className={big ? "strip big" : "strip"} role={link ? "group" : "img"} aria-label={label} title={big ? undefined : label}>
       <span className="strip-cells">
-        {lit.map((n, i) => (
-          <span key={i} className="cell" data-l={n === 0 ? 0 : n < 3 ? 1 : n < 5 ? 2 : 3} />
-        ))}
+        {lit.map((n, i) => {
+          const l = n === 0 ? 0 : n < 3 ? 1 : n < 5 ? 2 : 3;
+          return link && n ? (
+            <a key={i} className="cell" data-l={l} href={`#/year/${y0 + i}`} title={`What HN recommended in ${y0 + i}`} aria-label={`Time machine: ${y0 + i}`} />
+          ) : (
+            <span key={i} className="cell" data-l={l} />
+          );
+        })}
       </span>
       {big && (
         <span className="strip-axis" aria-hidden="true">
@@ -255,7 +276,22 @@ export default function App() {
   const [err, setErr] = useState(false);
   const [menu, setMenu] = useState(false);
   const [help, setHelp] = useState(false);
+  const [palette, setPalette] = useState(false);
   const route = useRoute();
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPalette((x) => !x);
+      }
+    };
+    window.addEventListener("keydown", on);
+    return () => window.removeEventListener("keydown", on);
+  }, []);
+  useEffect(() => {
+    setPalette(false);
+    closeListMenu();
+  }, [route]);
   const load = () => {
     setErr(false);
     loadData().then(setData, () => setErr(true));
@@ -287,6 +323,11 @@ export default function App() {
           <Mark />
         </a>
         <SearchBox route={route} />
+        <button className="btn ghost jump" onClick={() => setPalette(true)} title="Jump to anything (⌘K)">
+          <Icon name="cmd" />
+          <span>Jump to</span>
+          <kbd>⌘K</kbd>
+        </button>
         {data && (
           <button className="btn ghost surprise" onClick={() => surpriseMe(data)} title="Surprise me (r)">
             <Icon name="spark" />
@@ -315,6 +356,8 @@ export default function App() {
       </main>
 
       {help && <Help onClose={() => setHelp(false)} />}
+      {palette && data && <Palette data={data} onClose={() => setPalette(false)} />}
+      {data && <ListMenu data={data} />}
       <ToastView />
     </div>
   );
@@ -329,7 +372,15 @@ function Page({ data, route }: { data: Data; route: Route }) {
     case "area":
       return <Area data={data} id={route.id} />;
     case "watch":
-      return <Watch data={data} id={route.id} auto={route.auto} />;
+      return <Watch key={route.id} data={data} id={route.id} auto={route.auto} list={route.list} />;
+    case "playlists":
+      return <Playlists data={data} />;
+    case "playlist":
+      return <PlaylistPage data={data} id={route.id} />;
+    case "year":
+      return <YearPage data={data} year={route.y} />;
+    case "channel":
+      return <ChannelPage data={data} name={route.name} />;
     case "search":
       return <Search data={data} q={route.q} />;
     case "liked":
@@ -378,6 +429,13 @@ function useShortcuts(data: Data | null, route: Route, setHelp: (f: (h: boolean)
         case "x":
           if (focused) hideWithUndo(focused);
           return;
+        case "p":
+          if (v) {
+            const anchor = cardEl ?? document.querySelector<HTMLElement>(".watch-head .actions") ?? document.body;
+            openListMenu(v.id, anchor);
+            e.preventDefault();
+          }
+          return;
         case "l":
           if (v) {
             const was = snapshot().liked.includes(v.id);
@@ -400,11 +458,13 @@ function useShortcuts(data: Data | null, route: Route, setHelp: (f: (h: boolean)
 
 function Help({ onClose }: { onClose: () => void }) {
   const rows: [string, string][] = [
-    ["/", "Search"],
+    ["⌘K", "Jump to a topic, year, channel, video or page"],
+    ["/", "Search by meaning"],
     ["j  k", "Next and previous video"],
     ["Enter", "Open the focused video"],
     ["w", "Save to or remove from Watch later"],
     ["l", "Like the focused or playing video"],
+    ["p", "Save the focused or playing video to a playlist"],
     ["x", "Not for me (with undo)"],
     ["s", "Shuffle For you"],
     ["r", "Surprise me"],
@@ -523,6 +583,16 @@ function Nav({ data, route, onHelp }: { data: Data | null; route: Route; onHelp:
         </li>
         <li><a href="#/liked" aria-current={cur("liked")}><Icon name="heart" />Liked</a></li>
         <li><a href="#/history" aria-current={cur("history")}><Icon name="history" />History</a></li>
+        <li>
+          <a href="#/playlists" aria-current={route.page === "playlists" || route.page === "playlist" ? "page" : undefined}>
+            <Icon name="list" />Playlists{s.playlists.length > 0 && <span className="count">{s.playlists.length}</span>}
+          </a>
+        </li>
+        <li>
+          <a href={`#/year/${data ? data.meta.years[1] : 2026}`} aria-current={route.page === "year" ? "page" : undefined}>
+            <Icon name="cal" />Time machine
+          </a>
+        </li>
       </ul>
       {data && (
         <>
@@ -604,6 +674,15 @@ function CardActions({ v }: { v: Video }) {
       >
         <Icon name="clock" />
       </button>
+      <button
+        className="chip-btn"
+        aria-pressed={s.playlists.some((p) => p.ids.includes(v.id))}
+        onClick={(e) => openListMenu(v.id, e.currentTarget)}
+        aria-label={`Save ${v.t} to a playlist`}
+        title="Save to playlist (p)"
+      >
+        <Icon name="list" />
+      </button>
       <button className="chip-btn" onClick={() => hideWithUndo(v)} aria-label={`Not for me: hide ${v.t}`} title="Not for me (x)">
         <Icon name="x" />
       </button>
@@ -612,19 +691,21 @@ function CardActions({ v }: { v: Video }) {
 }
 
 function Card({ data, v }: { data: Data; v: Video }) {
+  const s = useStore();
   return (
     <article className="card" data-vid={v.id}>
       <div className="card-media">
         <a href={`#/watch/${v.id}`} tabIndex={-1} aria-hidden="true">
           <img src={thumb(v.id)} alt="" loading="lazy" />
         </a>
+        <ProgressBar p={s.progress[v.id]} />
         <span className="kind">{v.type}</span>
         <CardActions v={v} />
       </div>
       <h3 className="card-title">
         <a href={`#/watch/${v.id}`}>{v.t}</a>
       </h3>
-      <p className="card-meta">{v.ch}</p>
+      <p className="card-meta"><ChannelLink name={v.ch} /></p>
       <div className="card-foot">
         <TopicLink data={data} id={v.cats[0]} />
         <YearStrip data={data} v={v} />
@@ -697,8 +778,8 @@ function Feed({ data, items, empty }: { data: Data; items: Ranked[]; empty?: Rea
   return <Grid data={data} items={items} />;
 }
 
-function Shelf({ data, title, sub, items }: { data: Data; title: string; sub: string; items: Ranked[] }) {
-  if (items.length < 4) return null;
+function Shelf({ data, title, sub, items, min = 4 }: { data: Data; title: string; sub: string; items: Ranked[]; min?: number }) {
+  if (items.length < min) return null;
   return (
     <section className="shelf" aria-label={title}>
       <div className="shelf-head">
@@ -769,6 +850,11 @@ function Home({ data }: { data: Data }) {
     () => shelf(data, s, (v) => match(v) && v.years[0] >= y1 - 2, 10, new Set([...inFeed, ...decade.map((r) => r.v.id)])),
     [data, s, inFeed, decade], // eslint-disable-line react-hooks/exhaustive-deps
   );
+  const going = Object.entries(s.progress)
+    .filter(([id, p]) => isInProgress(p) && data.byId.has(id) && !s.hidden.includes(id))
+    .sort((x, y) => y[1].at - x[1].at)
+    .slice(0, 10)
+    .map(([id]) => ({ v: data.byId.get(id)!, score: 0 }));
   const lead = items[0];
   const a = items.slice(1, 13);
   const b = items.slice(13, 25);
@@ -802,6 +888,9 @@ function Home({ data }: { data: Data }) {
         </div>
       ) : (
         <>
+          {going.length > 0 && (
+            <Shelf data={data} title="Continue watching" sub="Picks up where you stopped" items={going} min={1} />
+          )}
           <Lead data={data} v={lead.v} />
           <Grid data={data} items={a} />
           <Shelf data={data} title="Still recommended a decade on" sub={`First recommended by ${y1 - 10} and still recommended in ${y1 - 1} or ${y1}`} items={decade} />
@@ -1121,13 +1210,23 @@ function Tune({ data }: { data: Data }) {
   );
 }
 
-/** Listens to the YouTube embed and calls onEnd when the video finishes. */
-function usePlayerEnd(frame: React.RefObject<HTMLIFrameElement | null>, id: string, onEnd: () => void) {
-  const cb = useRef(onEnd);
-  cb.current = onEnd;
+/**
+ * Talks to the YouTube embed: calls onTime with (seconds in, length) as it plays and onEnd when it
+ * finishes. The embed reports through postMessage once it is told we are listening.
+ */
+function usePlayer(
+  frame: React.RefObject<HTMLIFrameElement | null>,
+  id: string,
+  onTime: (t: number, d: number) => void,
+  onEnd: () => void,
+) {
+  const cbs = useRef({ onTime, onEnd });
+  cbs.current = { onTime, onEnd };
   useEffect(() => {
     const el = frame.current;
     if (!el) return;
+    let duration = 0;
+    let ended = false;
     const hello = () => {
       el.contentWindow?.postMessage(JSON.stringify({ event: "listening", id: 1, channel: "widget" }), "*");
       el.contentWindow?.postMessage(JSON.stringify({ event: "command", func: "addEventListener", args: ["onStateChange"], id: 1, channel: "widget" }), "*");
@@ -1135,12 +1234,21 @@ function usePlayerEnd(frame: React.RefObject<HTMLIFrameElement | null>, id: stri
     el.addEventListener("load", hello);
     const on = (e: MessageEvent) => {
       if (e.source !== el.contentWindow || typeof e.data !== "string") return;
+      let m: { event?: string; info?: unknown };
       try {
-        const m = JSON.parse(e.data);
-        const ended = (m.event === "onStateChange" && m.info === 0) || (m.event === "infoDelivery" && m.info?.playerState === 0);
-        if (ended) cb.current();
+        m = JSON.parse(e.data);
       } catch {
-        /* not a player message */
+        return;
+      }
+      const info = (m.info ?? {}) as { duration?: number; currentTime?: number; playerState?: number };
+      if (m.event === "infoDelivery") {
+        if (typeof info.duration === "number" && info.duration > 0) duration = info.duration;
+        if (typeof info.currentTime === "number" && duration > 0) cbs.current.onTime(info.currentTime, duration);
+      }
+      const isEnd = (m.event === "onStateChange" && m.info === 0) || (m.event === "infoDelivery" && info.playerState === 0);
+      if (isEnd && !ended) {
+        ended = true;
+        cbs.current.onEnd();
       }
     };
     window.addEventListener("message", on);
@@ -1151,7 +1259,20 @@ function usePlayerEnd(frame: React.RefObject<HTMLIFrameElement | null>, id: stri
   }, [frame, id]);
 }
 
-function Watch({ data, id, auto }: { data: Data; id: string; auto: boolean }) {
+/** Sends a command to the embed, e.g. seekTo. Exposed for testing autoplay. */
+function playerCommand(el: HTMLIFrameElement | null, func: string, args: unknown[] = []) {
+  el?.contentWindow?.postMessage(JSON.stringify({ event: "command", func, args, id: 1, channel: "widget" }), "*");
+}
+
+const fmtClock = (sec: number) => {
+  const s = Math.max(0, Math.round(sec));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = String(s % 60).padStart(2, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
+};
+
+function Watch({ data, id, auto, list }: { data: Data; id: string; auto: boolean; list: string | null }) {
   const s = useStore();
   const v = data.byId.get(id);
   const frame = useRef<HTMLIFrameElement>(null);
@@ -1165,27 +1286,51 @@ function Watch({ data, id, auto }: { data: Data; id: string; auto: boolean }) {
       () => setFailed(true),
     );
   };
+  // Resume point is read once per video, so saving progress doesn't reload the player.
+  const [startAt] = useState(() => {
+    const p = snapshot().progress[id];
+    return isInProgress(p) ? Math.max(0, p!.t - 3) : 0;
+  });
   useEffect(() => {
     if (v) actions.watched(v.id);
     getMentions();
   }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const playlist = list ? s.playlists.find((p) => p.id === list) : undefined;
   const hiddenSet = new Set(s.hidden);
+  const fromList = playlist ? playlist.ids.slice(playlist.ids.indexOf(id) + 1) : [];
   const queue = v
     ? [
+        ...fromList.map((x) => data.byId.get(x)),
         ...s.later.filter((x) => x !== id).map((x) => data.byId.get(x)),
         ...v.sim.map(([sid]) => data.byId.get(sid)),
       ].filter((x, i, arr): x is Video => !!x && !hiddenSet.has(x.id) && x.id !== id && arr.findIndex((y) => y?.id === x.id) === i)
     : [];
   const next = queue[0];
-  usePlayerEnd(frame, id, () => {
-    if (snapshot().autoplay && next) go(`#/watch/${next.id}?auto=1`);
-  });
+  const lastSave = useRef(0);
+  usePlayer(
+    frame,
+    id,
+    (t, d) => {
+      const now = Date.now();
+      if (now - lastSave.current < 5000) return;
+      lastSave.current = now;
+      actions.setProgress(id, t, d);
+    },
+    () => {
+      const p = snapshot().progress[id];
+      if (p) actions.setProgress(id, p.d, p.d);
+      if (!snapshot().autoplay || !next) return;
+      const keepList = playlist && fromList.includes(next.id) ? `&list=${playlist.id}` : "";
+      go(`#/watch/${next.id}?auto=1${keepList}`);
+    },
+  );
 
   if (!v) return <NotFound what="video" />;
   const liked = s.liked.includes(v.id);
   const later = s.later.includes(v.id);
   const hidden = s.hidden.includes(v.id);
+  const inLists = s.playlists.filter((p) => p.ids.includes(v.id)).length;
   const also = v.rel.map((rid) => data.byId.get(rid)).filter((x): x is Video => !!x && !hiddenSet.has(x.id));
   const fromLater = s.later.filter((x) => x !== id).length;
   const share = async () => {
@@ -1197,6 +1342,12 @@ function Watch({ data, id, auto }: { data: Data; id: string; auto: boolean }) {
       toast("Couldn't copy. The link is in the address bar.");
     }
   };
+  const queueNote = [
+    playlist && fromList.length ? `${fromList.length} more in “${playlist.name}”` : "",
+    fromLater > 0 ? `${fromLater} from Watch later` : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
 
   return (
     <div className="watch">
@@ -1205,16 +1356,20 @@ function Watch({ data, id, auto }: { data: Data; id: string; auto: boolean }) {
           <iframe
             ref={frame}
             key={v.id}
-            src={`https://www.youtube-nocookie.com/embed/${v.id}?rel=0&enablejsapi=1&autoplay=${auto ? 1 : 0}&origin=${encodeURIComponent(location.origin)}`}
+            data-testid="player"
+            src={`https://www.youtube-nocookie.com/embed/${v.id}?rel=0&enablejsapi=1&autoplay=${auto ? 1 : 0}${startAt ? `&start=${Math.floor(startAt)}` : ""}&origin=${encodeURIComponent(location.origin)}`}
             title={v.t}
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
             allowFullScreen
           />
         </div>
+        {startAt > 0 && <p className="resume-note">Resuming at {fmtClock(startAt)}. <button className="text-btn" onClick={() => playerCommand(frame.current, "seekTo", [0, true])}>Start over</button></p>}
         <div className="title-row watch-head">
           <div>
             <h1 className="watch-title">{v.t}</h1>
-            <p className="sub">{v.ch} <span className="kind-inline">{v.type}</span></p>
+            <p className="sub">
+              <ChannelLink name={v.ch} /> <span className="kind-inline">{v.type}</span>
+            </p>
           </div>
           <div className="actions">
             <button className="btn" aria-pressed={liked} onClick={() => actions.toggleLike(v.id)} title="Like (l)">
@@ -1222,6 +1377,9 @@ function Watch({ data, id, auto }: { data: Data; id: string; auto: boolean }) {
             </button>
             <button className="btn" aria-pressed={later} onClick={() => toggleLaterWithNote(v)} title="Watch later (w)">
               <Icon name="clock" />{later ? "Saved" : "Watch later"}
+            </button>
+            <button className="btn" aria-pressed={inLists > 0} onClick={(e) => openListMenu(v.id, e.currentTarget)} title="Save to a playlist (p)">
+              <Icon name="list" />{inLists > 0 ? `In ${inLists} ${inLists === 1 ? "playlist" : "playlists"}` : "Save to playlist"}
             </button>
             <button className="btn" onClick={share}><Icon name="link" />Copy link</button>
             <button className="btn quiet" aria-pressed={hidden} onClick={() => (hidden ? actions.unhide(v.id) : hideWithUndo(v))}>
@@ -1248,7 +1406,7 @@ function Watch({ data, id, auto }: { data: Data; id: string; auto: boolean }) {
             <strong>{v.rm}</strong> different {v.rm === 1 ? "month" : "months"},{" "}
             {v.years[0] === v.years[1] ? `in ${v.years[0]}` : `${v.years[0]} to ${v.years[1]}`}
           </p>
-          <YearStrip data={data} v={v} big />
+          <YearStrip data={data} v={v} big link />
           <div className="comments">
             {failed && (
               <div className="frame-msg small">
@@ -1279,8 +1437,8 @@ function Watch({ data, id, auto }: { data: Data; id: string; auto: boolean }) {
             Autoplay
           </label>
         </div>
-        <p className="faint side-note">{fromLater > 0 ? `${fromLater} from Watch later, then similar videos` : "Similar videos"}</p>
-        <SideList data={data} items={queue.slice(0, 8)} first />
+        <p className="faint side-note">{queueNote ? `${queueNote}, then similar videos` : "Similar videos"}</p>
+        <SideList data={data} items={queue.slice(0, 8)} first listId={playlist && fromList.length ? playlist.id : undefined} />
         {also.length > 0 && (
           <>
             <h2 className="section-title side-gap">The same HN people also recommend</h2>
@@ -1292,13 +1450,17 @@ function Watch({ data, id, auto }: { data: Data; id: string; auto: boolean }) {
   );
 }
 
-function SideList({ data, items, first = false }: { data: Data; items: Video[]; first?: boolean }) {
+function SideList({ data, items, first = false, listId }: { data: Data; items: Video[]; first?: boolean; listId?: string }) {
+  const s = useStore();
   return (
     <ul className="side-list">
       {items.map((v, i) => (
         <li key={v.id} data-vid={v.id} className={first && i === 0 ? "next" : undefined}>
-          <a href={`#/watch/${v.id}`}>
-            <img src={thumb(v.id)} alt="" loading="lazy" />
+          <a href={`#/watch/${v.id}${listId && i === 0 ? `?list=${listId}` : ""}`}>
+            <span className="side-thumb">
+              <img src={thumb(v.id)} alt="" loading="lazy" />
+              <ProgressBar p={s.progress[v.id]} />
+            </span>
             <span>
               <strong>{v.t}</strong>
               <em>{v.ch}</em>
@@ -1308,6 +1470,417 @@ function SideList({ data, items, first = false }: { data: Data; items: Video[]; 
         </li>
       ))}
     </ul>
+  );
+}
+
+// ---------- small pieces shared by the new pages ----------
+
+function ChannelLink({ name }: { name: string }) {
+  return (
+    <a className="channel-link" href={`#/channel/${encodeURIComponent(name)}`}>
+      {name}
+    </a>
+  );
+}
+
+function ProgressBar({ p }: { p?: Progress }) {
+  if (!p || !(p.d > 0) || p.t < 30) return null;
+  const done = p.t >= p.d - FINISH_MARGIN;
+  return (
+    <span className={done ? "progress done" : "progress"} aria-label={done ? "Watched" : `Watched ${fmtClock(p.t)} of ${fmtClock(p.d)}`}>
+      <span style={{ width: `${Math.min(100, (p.t / p.d) * 100)}%` }} />
+    </span>
+  );
+}
+
+// ---------- the playlist menu: one floating menu for the whole app ----------
+
+type MenuAt = { vid: string; x: number; top: number; bottom: number } | null;
+let menuAt: MenuAt = null;
+const menuListeners = new Set<() => void>();
+function openListMenu(vid: string, anchor: HTMLElement) {
+  const r = anchor.getBoundingClientRect();
+  const w = 280;
+  menuAt = { vid, x: Math.max(12, Math.min(window.innerWidth - w - 12, r.right - w)), top: r.top, bottom: r.bottom };
+  menuListeners.forEach((l) => l());
+}
+function closeListMenu() {
+  menuAt = null;
+  menuListeners.forEach((l) => l());
+}
+
+function ListMenu({ data }: { data: Data }) {
+  const at = useSyncExternalStore(
+    (l) => {
+      menuListeners.add(l);
+      return () => menuListeners.delete(l);
+    },
+    () => menuAt,
+  );
+  const s = useStore();
+  const [name, setName] = useState("");
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!at) return;
+    setName("");
+    const away = (e: MouseEvent) => {
+      if (box.current && !box.current.contains(e.target as Node)) closeListMenu();
+    };
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && closeListMenu();
+    const scroll = () => closeListMenu();
+    setTimeout(() => document.addEventListener("mousedown", away), 0);
+    document.addEventListener("keydown", esc);
+    window.addEventListener("scroll", scroll, { passive: true });
+    return () => {
+      document.removeEventListener("mousedown", away);
+      document.removeEventListener("keydown", esc);
+      window.removeEventListener("scroll", scroll);
+    };
+  }, [at]);
+  if (!at) return null;
+  const v = data.byId.get(at.vid);
+  if (!v) return null;
+  // Open below the button when there is room, otherwise above it; never over the button itself.
+  const below = window.innerHeight - at.bottom > 330 || at.top < 330;
+  const place = below ? { top: at.bottom + 8 } : { bottom: window.innerHeight - at.top + 8 };
+  return (
+    <div className="list-menu" ref={box} role="dialog" aria-label="Save to playlist" style={{ left: at.x, ...place }}>
+      <p className="list-menu-title">Save to playlist</p>
+      {s.playlists.length === 0 && <p className="faint list-menu-empty">No playlists yet. Name your first one below.</p>}
+      <ul>
+        {s.playlists.map((p) => (
+          <li key={p.id}>
+            <label>
+              <input
+                type="checkbox"
+                checked={p.ids.includes(v.id)}
+                onChange={() => {
+                  const had = p.ids.includes(v.id);
+                  actions.togglePlaylistItem(p.id, v.id);
+                  toast(had ? `Removed from “${p.name}”` : `Saved to “${p.name}”`);
+                }}
+              />
+              <span>{p.name}</span>
+              <span className="faint">{p.ids.length}</span>
+            </label>
+          </li>
+        ))}
+      </ul>
+      <form
+        className="list-menu-new"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!name.trim()) return;
+          actions.createPlaylist(name, v.id);
+          toast(`Created “${name.trim()}” with this video`);
+          closeListMenu();
+        }}
+      >
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="New playlist name" aria-label="New playlist name" autoFocus={s.playlists.length === 0} />
+        <button className="btn primary small" type="submit" disabled={!name.trim()}>Create</button>
+      </form>
+    </div>
+  );
+}
+
+// ---------- playlists ----------
+
+function Playlists({ data }: { data: Data }) {
+  const s = useStore();
+  const [name, setName] = useState("");
+  return (
+    <>
+      <div className="title-row">
+        <div>
+          <h1>Playlists</h1>
+          <p className="sub">{s.playlists.length} {s.playlists.length === 1 ? "playlist" : "playlists"}. Add any video with the list button on its card or player.</p>
+        </div>
+        <form
+          className="inline-new"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!name.trim()) return;
+            const id = actions.createPlaylist(name);
+            setName("");
+            go(`#/playlist/${id}`);
+          }}
+        >
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="New playlist name" aria-label="New playlist name" />
+          <button className="btn primary" type="submit" disabled={!name.trim()}>Create</button>
+        </form>
+      </div>
+      {s.playlists.length === 0 ? (
+        <div className="frame-msg">
+          <p>No playlists yet. Name one above, or press the list button on any video to start one with it.</p>
+        </div>
+      ) : (
+        <div className="lists">
+          {s.playlists.map((p) => {
+            const vids = p.ids.map((x) => data.byId.get(x)).filter((x): x is Video => !!x);
+            return (
+              <a key={p.id} className="list-card" href={`#/playlist/${p.id}`}>
+                <span className="list-cover">
+                  {vids.slice(0, 4).map((x) => <img key={x.id} src={thumb(x.id)} alt="" loading="lazy" />)}
+                  {vids.length === 0 && <span className="list-cover-empty">Empty</span>}
+                </span>
+                <strong>{p.name}</strong>
+                <span className="faint">{vids.length} {vids.length === 1 ? "video" : "videos"}</span>
+              </a>
+            );
+          })}
+        </div>
+      )}
+    </>
+  );
+}
+
+function PlaylistPage({ data, id }: { data: Data; id: string }) {
+  const s = useStore();
+  const p = s.playlists.find((x) => x.id === id);
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(p?.name ?? "");
+  useEffect(() => setName(p?.name ?? ""), [p?.name]);
+  if (!p) return <NotFound what="playlist" />;
+  const vids = p.ids.map((x) => data.byId.get(x)).filter((x): x is Video => !!x);
+  const remove = () => {
+    const copy = p;
+    actions.deletePlaylist(p.id);
+    go("#/playlists");
+    toast(`Deleted “${copy.name}”`, { label: "Undo", run: () => actions.restorePlaylist(copy) });
+  };
+  return (
+    <>
+      <div className="title-row">
+        <div>
+          <a className="crumb" href="#/playlists"><Icon name="back" size={14} />Playlists</a>
+          {editing ? (
+            <form
+              className="rename"
+              onSubmit={(e) => {
+                e.preventDefault();
+                actions.renamePlaylist(p.id, name);
+                setEditing(false);
+              }}
+            >
+              <input value={name} onChange={(e) => setName(e.target.value)} aria-label="Playlist name" autoFocus />
+              <button className="btn small" type="submit">Save</button>
+            </form>
+          ) : (
+            <h1>{p.name}</h1>
+          )}
+          <p className="sub">{vids.length} {vids.length === 1 ? "video" : "videos"}, played in this order</p>
+        </div>
+        <div className="actions">
+          {vids.length > 0 && (
+            <a className="btn primary" href={`#/watch/${vids[0].id}?auto=1&list=${p.id}`}><Icon name="next" />Play all</a>
+          )}
+          {!editing && <button className="btn" onClick={() => setEditing(true)}>Rename</button>}
+          <button className="btn quiet" onClick={remove}>Delete</button>
+        </div>
+      </div>
+      {vids.length === 0 ? (
+        <div className="frame-msg">
+          <p>This playlist is empty. Press the list button on any video to add it here.</p>
+          <a className="text-btn" href="#/">Browse For you</a>
+        </div>
+      ) : (
+        <ol className="list-rows">
+          {vids.map((v, i) => (
+            <li key={v.id} data-vid={v.id}>
+              <span className="list-n">{i + 1}</span>
+              <a className="list-thumb" href={`#/watch/${v.id}?list=${p.id}`}>
+                <img src={thumb(v.id)} alt="" loading="lazy" />
+                <ProgressBar p={s.progress[v.id]} />
+              </a>
+              <span className="list-text card-title">
+                <a href={`#/watch/${v.id}?list=${p.id}`}>{v.t}</a>
+                <em><ChannelLink name={v.ch} /></em>
+              </span>
+              <span className="list-tools">
+                <button className="icon-btn" onClick={() => actions.moveInPlaylist(p.id, v.id, -1)} disabled={i === 0} aria-label={`Move ${v.t} up`}><Icon name="up" /></button>
+                <button className="icon-btn" onClick={() => actions.moveInPlaylist(p.id, v.id, 1)} disabled={i === vids.length - 1} aria-label={`Move ${v.t} down`}><Icon name="down" /></button>
+                <button className="icon-btn" onClick={() => actions.togglePlaylistItem(p.id, v.id)} aria-label={`Remove ${v.t} from this playlist`}><Icon name="x" /></button>
+              </span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </>
+  );
+}
+
+// ---------- the HN time machine ----------
+
+function yearCounts(data: Data) {
+  const [y0, y1] = data.meta.years;
+  const n = new Array(y1 - y0 + 1).fill(0);
+  for (const v of data.videos) if (v.recs > 0) for (let i = 0; i < n.length; i++) if (v.ry[i] !== "0") n[i]++;
+  return n as number[];
+}
+
+function YearPage({ data, year }: { data: Data; year: number }) {
+  const s = useStore();
+  const [y0, y1] = data.meta.years;
+  const y = Number.isFinite(year) ? Math.min(y1, Math.max(y0, year)) : y1;
+  const i = y - y0;
+  const counts = useMemo(() => yearCounts(data), [data]);
+  const max = Math.max(...counts);
+  const [n, more] = useMore(36, y);
+  const hidden = new Set(s.hidden);
+  const all = useMemo(
+    () =>
+      data.videos
+        .filter((v) => v.recs > 0 && v.ry[i] !== "0" && !hidden.has(v.id))
+        .map((v) => ({ v, score: Number(v.ry[i]) * 2 + quality(v) + (v.years[0] === y ? 1 : 0) }))
+        .sort((a, b) => b.score - a.score),
+    [data, i, s.hidden], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const firsts = all.filter((r) => r.v.years[0] === y).length;
+  return (
+    <>
+      <div className="title-row">
+        <div>
+          <h1>Time machine: {y}</h1>
+          <p className="sub">
+            {fmt(all.length)} videos HN commenters recommended in {y}, {fmt(firsts)} of them for the first time. Most-recommended that year first.
+          </p>
+        </div>
+        <div className="actions">
+          <a className="btn" href={`#/year/${y - 1}`} aria-disabled={y <= y0} onClick={(e) => y <= y0 && e.preventDefault()}><Icon name="back" />{y - 1}</a>
+          <a className="btn" href={`#/year/${y + 1}`} aria-disabled={y >= y1} onClick={(e) => y >= y1 && e.preventDefault()}>{y + 1}<span className="flip"><Icon name="back" /></span></a>
+        </div>
+      </div>
+      <nav className="years" aria-label="Choose a year">
+        {counts.map((c, k) => (
+          <a key={k} href={`#/year/${y0 + k}`} aria-current={k === i ? "page" : undefined} title={`${y0 + k}: ${fmt(c)} videos`}>
+            <span className="year-bar" style={{ height: `${Math.max(4, (c / max) * 100)}%` }} />
+            <span className="year-n">{fmt(c)}</span>
+            <span className="year-y">{String(y0 + k).slice(2)}</span>
+          </a>
+        ))}
+      </nav>
+      <Feed data={data} items={all.slice(0, n)} empty={`Nothing was recommended in ${y} among the comments kept.`} />
+      {all.length > n && (
+        <button className="btn more" onClick={more}>
+          Show more <span className="faint">{fmt(n)} of {fmt(all.length)}</span>
+        </button>
+      )}
+    </>
+  );
+}
+
+// ---------- channels ----------
+
+function ChannelPage({ data, name }: { data: Data; name: string }) {
+  const s = useStore();
+  const hidden = new Set(s.hidden);
+  const vids = data.videos.filter((v) => v.ch === name && !hidden.has(v.id)).sort((a, b) => b.score - a.score);
+  if (!vids.length) return <NotFound what="channel" />;
+  const recs = vids.reduce((a, v) => a + v.recs, 0);
+  const first = Math.min(...vids.map((v) => v.years[0]));
+  const last = Math.max(...vids.map((v) => v.years[1]));
+  const topics = [...new Set(vids.map((v) => v.cats[0]))].slice(0, 8);
+  return (
+    <>
+      <div className="title-row">
+        <div>
+          <p className="crumb">Channel</p>
+          <h1>{name}</h1>
+          <p className="sub">
+            {vids.length} {vids.length === 1 ? "video" : "videos"} HN recommended, {fmt(recs)} recommendations in all,{" "}
+            {first === last ? `in ${first}` : `${first} to ${last}`}
+          </p>
+        </div>
+      </div>
+      <ul className="topic-row">
+        {topics.map((c) => (
+          <li key={c}><TopicLink data={data} id={c} /></li>
+        ))}
+      </ul>
+      <Feed data={data} items={vids.map((v) => ({ v, score: v.score }))} />
+    </>
+  );
+}
+
+// ---------- command palette ----------
+
+type Hit = { kind: string; label: string; sub?: string; href: string };
+
+function paletteHits(data: Data, s: State, q: string): Hit[] {
+  const t = q.trim().toLowerCase();
+  const [y0, y1] = data.meta.years;
+  const pages: Hit[] = [
+    { kind: "Page", label: "For you", href: "#/" },
+    { kind: "Page", label: "Watch later", sub: `${s.later.length} saved`, href: "#/later" },
+    { kind: "Page", label: "Liked", href: "#/liked" },
+    { kind: "Page", label: "History", href: "#/history" },
+    { kind: "Page", label: "Playlists", sub: `${s.playlists.length}`, href: "#/playlists" },
+    { kind: "Page", label: "Time machine", sub: `${y0} to ${y1}`, href: `#/year/${y1}` },
+    { kind: "Page", label: "Tune your feed", href: "#/tune" },
+    { kind: "Page", label: "How it works", href: "#/about" },
+  ];
+  if (!t) return [...pages, ...s.playlists.slice(0, 4).map((p) => ({ kind: "Playlist", label: p.name, sub: `${p.ids.length} videos`, href: `#/playlist/${p.id}` }))];
+  const has = (x: string) => x.toLowerCase().includes(t);
+  const out: Hit[] = pages.filter((p) => has(p.label));
+  const yr = Number(t);
+  if (/^\d{4}$/.test(t) && yr >= y0 && yr <= y1) out.unshift({ kind: "Year", label: `Time machine: ${yr}`, href: `#/year/${yr}` });
+  for (const p of s.playlists) if (has(p.name)) out.push({ kind: "Playlist", label: p.name, sub: `${p.ids.length} videos`, href: `#/playlist/${p.id}` });
+  for (const a of data.meta.areas) if (has(a.name)) out.push({ kind: "Area", label: a.name, href: `#/area/${a.id}` });
+  for (const [id, c] of Object.entries(data.meta.cats)) if (has(c.name)) out.push({ kind: "Topic", label: c.name, sub: `${c.n} videos`, href: `#/topic/${id}` });
+  const chans = new Map<string, number>();
+  const vids: Hit[] = [];
+  for (const v of data.videos) {
+    if (has(v.ch)) chans.set(v.ch, (chans.get(v.ch) ?? 0) + 1);
+    if (vids.length < 8 && has(v.t)) vids.push({ kind: "Video", label: v.t, sub: v.ch, href: `#/watch/${v.id}` });
+  }
+  [...chans.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).forEach(([ch, n]) => out.push({ kind: "Channel", label: ch, sub: `${n} videos`, href: `#/channel/${encodeURIComponent(ch)}` }));
+  out.push(...vids);
+  out.push({ kind: "Search", label: `Search by meaning for “${q.trim()}”`, href: `#/search?q=${encodeURIComponent(q.trim())}` });
+  return out.slice(0, 40);
+}
+
+function Palette({ data, onClose }: { data: Data; onClose: () => void }) {
+  const s = useStore();
+  const [q, setQ] = useState("");
+  const [sel, setSel] = useState(0);
+  const hits = useMemo(() => paletteHits(data, s, q), [data, s, q]);
+  useEffect(() => setSel(0), [q]);
+  const pick = (h?: Hit) => {
+    if (!h) return;
+    onClose();
+    go(h.href);
+  };
+  return (
+    <div className="dialog-wrap palette-wrap" onClick={onClose}>
+      <div className="dialog palette" role="dialog" aria-modal="true" aria-label="Jump to" onClick={(e) => e.stopPropagation()}>
+        <div className="palette-input">
+          <Icon name="search" />
+          <input
+            autoFocus
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Jump to a topic, year, channel, video or page"
+            aria-label="Jump to"
+            onKeyDown={(e) => {
+              if (e.key === "ArrowDown") { e.preventDefault(); setSel((x) => Math.min(hits.length - 1, x + 1)); }
+              else if (e.key === "ArrowUp") { e.preventDefault(); setSel((x) => Math.max(0, x - 1)); }
+              else if (e.key === "Enter") { e.preventDefault(); pick(hits[sel]); }
+              else if (e.key === "Escape") onClose();
+            }}
+          />
+          <kbd>esc</kbd>
+        </div>
+        <ul className="palette-hits" role="listbox">
+          {hits.map((h, k) => (
+            <li key={h.kind + h.href + k} role="option" aria-selected={k === sel} onMouseEnter={() => setSel(k)} onClick={() => pick(h)}>
+              <span className="hit-kind">{h.kind}</span>
+              <span className="hit-label">{h.label}</span>
+              {h.sub && <span className="hit-sub">{h.sub}</span>}
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
   );
 }
 

@@ -38,6 +38,18 @@ In the browser, a like raises the video's nearest neighbours by embedding and th
 recommenders also recommended. "Not for me" pushes its neighbours down, and videos already opened drop
 back. Interest weights can be changed on the Tune page. All of this stays in `localStorage`.
 
+## Features
+
+- For you, with Shuffle, Surprise me and a video-type filter; shelves for videos still recommended a
+  decade on and for videos new to HN
+- Search by meaning, run in the browser
+- Topic and area pages, channel pages, and a time machine: what HN recommended in each year, 2007 to 2026
+- Playlists you can reorder and play straight through; Watch later as a queue
+- Continue watching: the player's position is saved every few seconds and resumed next time, and the
+  next video in the playlist or queue plays when one ends
+- Keyboard shortcuts (`?` lists them) and a ⌘K palette to jump to any page, topic, year, channel or video
+- Library download and import, so likes, playlists and progress can move between browsers
+
 ## Run it
 
 ```bash
